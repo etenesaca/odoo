@@ -27,6 +27,7 @@ Miscellaneous tools used by OpenERP.
 
 from functools import wraps
 import cProfile
+from contextlib import contextmanager
 import subprocess
 import logging
 import os
@@ -1209,6 +1210,28 @@ def dumpstacks(sig=None, frame=None):
 
     _logger.info("\n".join(code))
 
+class frozendict(dict):
+    """ An implementation of an immutable dictionary. """
+    def __delitem__(self, key):
+        raise NotImplementedError("'__delitem__' not supported on frozendict")
+    def __setitem__(self, key, val):
+        raise NotImplementedError("'__setitem__' not supported on frozendict")
+    def clear(self):
+        raise NotImplementedError("'clear' not supported on frozendict")
+    def pop(self, key, default=None):
+        raise NotImplementedError("'pop' not supported on frozendict")
+    def popitem(self):
+        raise NotImplementedError("'popitem' not supported on frozendict")
+    def setdefault(self, key, default=None):
+        raise NotImplementedError("'setdefault' not supported on frozendict")
+    def update(self, *args, **kwargs):
+        raise NotImplementedError("'update' not supported on frozendict")
 
+@contextmanager
+def ignore(*exc):
+    try:
+        yield
+    except exc:
+        pass
 
 # vim:expandtab:smartindent:tabstop=4:softtabstop=4:shiftwidth=4:

@@ -350,7 +350,7 @@ class purchase_order(osv.osv):
                         proc_ids = proc_obj.search(cr, uid, [('purchase_id', '=', order.id)])
                         if proc_ids and po.state == 'confirmed':
                             proc_obj.write(cr, uid, proc_ids, {'purchase_id': po.id})
-                        self.signal_purchase_cancel(cr, uid, [order.id])
+                        order.signal_workflow('purchase_cancel')
                     po.requisition_id.tender_done(context=context)
         return res
 
@@ -392,8 +392,8 @@ class purchase_order_line(osv.osv):
         return self.pool.get('purchase.requisition').generate_po(cr, uid, [tender_id], context=context)
 
 
-class product_product(osv.osv):
-    _inherit = 'product.product'
+class product_template(osv.osv):
+    _inherit = 'product.template'
 
     _columns = {
         'purchase_requisition': fields.boolean('Call for Bids', help="Check this box to generate Call for Bids instead of generating requests for quotation from procurement.")

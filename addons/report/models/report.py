@@ -19,16 +19,15 @@
 #
 ##############################################################################
 
+from openerp import api
 from openerp.osv import osv
 from openerp.tools import config
 from openerp.tools.translate import _
 from openerp.addons.web.http import request
 from openerp.tools.safe_eval import safe_eval as eval
 
-import os
+import re
 import time
-import psutil
-import signal
 import base64
 import logging
 import tempfile
@@ -52,15 +51,19 @@ try:
         ['wkhtmltopdf', '--version'], stdout=subprocess.PIPE, stderr=subprocess.PIPE
     )
 except OSError:
-    _logger.error('You need wkhtmltopdf to print a pdf version of the reports.')
+    _logger.info('You need wkhtmltopdf to print a pdf version of the reports.')
 else:
     out, err = process.communicate()
-    version = out.splitlines()[1].strip()
-    version = version.split(' ')[1]
+    version = re.search('([0-9.]+)', out).group(0)
     if LooseVersion(version) < LooseVersion('0.12.0'):
-        _logger.warning('Upgrade wkhtmltopdf to (at least) 0.12.0')
+        _logger.info('Upgrade wkhtmltopdf to (at least) 0.12.0')
         wkhtmltopdf_state = 'upgrade'
-    wkhtmltopdf_state = 'ok'
+    else:
+        wkhtmltopdf_state = 'ok'
+
+    if config['workers'] == 1:
+        _logger.info('You need to start OpenERP with at least two workers to print a pdf version of the reports.')
+        wkhtmltopdf_state = 'workers'
 
 
 class Report(osv.Model):
@@ -165,6 +168,11 @@ class Report(osv.Model):
             }
             return self.render(cr, uid, [], report.report_name, docargs, context=context)
 
+    @api.v8(get_html)
+    def get_html(self, records, report_name, data=None):
+        return self._model.get_html(self._cr, self._uid, records.ids, report_name,
+                                    data=data, context=self._context)
+
     def get_pdf(self, cr, uid, ids, report_name, html=None, data=None, context=None):
         """This method generates and returns pdf version of a report.
         """
@@ -257,6 +265,11 @@ class Report(osv.Model):
         )
         return pdf
 
+    @api.v8(get_pdf)
+    def get_pdf(self, records, report_name, html=None, data=None):
+        return self._model.get_pdf(self._cr, self._uid, records.ids, report_name,
+                                   html=html, data=data, context=self._context)
+
     def get_action(self, cr, uid, ids, report_name, data=None, context=None):
         """Return an action of type ir.actions.report.xml.
 
@@ -287,6 +300,11 @@ class Report(osv.Model):
             'report_file': report.report_file,
             'context': context,
         }
+
+    @api.v8(get_action)
+    def get_action(self, records, report_name, data=None):
+        return self._model.get_action(self._cr, self._uid, records.ids, report_name,
+                                      data=data, context=self._context)
 
     #--------------------------------------------------------------------------
     # Report generation helpers
@@ -323,6 +341,11 @@ class Report(osv.Model):
                         save_in_attachment[record_id] = filename
         return save_in_attachment
 
+    @api.v8(_check_attachment_use)
+    def _check_attachment_use(self, records, report):
+        return self._model._check_attachment_use(
+            self._cr, self._uid, records.ids, report, context=self._context)
+
     def _check_wkhtmltopdf(self):
         return wkhtmltopdf_state
 
@@ -343,19 +366,20 @@ class Report(osv.Model):
         command_args = []
         tmp_dir = tempfile.gettempdir()
 
-        # Passing the cookie to wkhtmltopdf in order to resolve URL.
+        # Passing the cookie to wkhtmltopdf in order to resolve internal links.
         try:
             if request:
                 command_args.extend(['--cookie', 'session_id', request.session.sid])
         except AttributeError:
             pass
 
-        # Display arguments
+        # Wkhtmltopdf arguments
+        command_args.extend(['--quiet'])  # Less verbose error messages
         if paperformat:
+            # Convert the paperformat record into arguments
             command_args.extend(self._build_wkhtmltopdf_args(paperformat, spec_paperformat_args))
 
-        command_args.extend(['--load-error-handling', 'ignore'])
-
+        # Force the landscape orientation if necessary
         if landscape and '--orientation' in command_args:
             command_args_copy = list(command_args)
             for index, elem in enumerate(command_args_copy):
@@ -366,61 +390,46 @@ class Report(osv.Model):
         elif landscape and not '--orientation' in command_args:
             command_args.extend(['--orientation', 'landscape'])
 
+        # Execute WKhtmltopdf
         pdfdocuments = []
-        # HTML to PDF thanks to WKhtmltopdf
         for index, reporthtml in enumerate(bodies):
-            command_arg_local = []
-            pdfreport = tempfile.NamedTemporaryFile(suffix='.pdf', prefix='report.tmp.',
-                                                    mode='w+b')
-            # Directly load the document if we have it
+            local_command_args = []
+            pdfreport = tempfile.NamedTemporaryFile(suffix='.pdf', prefix='report.tmp.', mode='w+b')
+
+            # Directly load the document if we already have it
             if save_in_attachment and save_in_attachment['loaded_documents'].get(reporthtml[0]):
                 pdfreport.write(save_in_attachment['loaded_documents'].get(reporthtml[0]))
                 pdfreport.seek(0)
                 pdfdocuments.append(pdfreport)
                 continue
 
-            # Header stuff
+            # Wkhtmltopdf handles header/footer as separate pages. Create them if necessary.
             if headers:
-                head_file = tempfile.NamedTemporaryFile(suffix='.html', prefix='report.header.tmp.',
-                                                        dir=tmp_dir, mode='w+')
+                head_file = tempfile.NamedTemporaryFile(suffix='.html', prefix='report.header.tmp.', dir=tmp_dir, mode='w+')
                 head_file.write(headers[index])
                 head_file.seek(0)
-                command_arg_local.extend(['--header-html', head_file.name])
-
-            # Footer stuff
+                local_command_args.extend(['--header-html', head_file.name])
             if footers:
-                foot_file = tempfile.NamedTemporaryFile(suffix='.html', prefix='report.footer.tmp.',
-                                                        dir=tmp_dir, mode='w+')
+                foot_file = tempfile.NamedTemporaryFile(suffix='.html', prefix='report.footer.tmp.', dir=tmp_dir, mode='w+')
                 foot_file.write(footers[index])
                 foot_file.seek(0)
-                command_arg_local.extend(['--footer-html', foot_file.name])
+                local_command_args.extend(['--footer-html', foot_file.name])
 
             # Body stuff
-            content_file = tempfile.NamedTemporaryFile(suffix='.html', prefix='report.body.tmp.',
-                                                       dir=tmp_dir, mode='w+')
+            content_file = tempfile.NamedTemporaryFile(suffix='.html', prefix='report.body.tmp.', dir=tmp_dir, mode='w+')
             content_file.write(reporthtml[1])
             content_file.seek(0)
 
             try:
-                # If the server is running with only one worker, ask to create a secund to be able
-                # to serve the http request of wkhtmltopdf subprocess.
-                if config['workers'] == 1:
-                    ppid = psutil.Process(os.getpid()).ppid
-                    os.kill(ppid, signal.SIGTTIN)
-
-                wkhtmltopdf = command + command_args + command_arg_local
+                wkhtmltopdf = command + command_args + local_command_args
                 wkhtmltopdf += [content_file.name] + [pdfreport.name]
 
-                process = subprocess.Popen(wkhtmltopdf, stdout=subprocess.PIPE,
-                                           stderr=subprocess.PIPE)
+                process = subprocess.Popen(wkhtmltopdf, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
                 out, err = process.communicate()
 
-                if config['workers'] == 1:
-                    os.kill(ppid, signal.SIGTTOU)
-
-                if process.returncode != 0:
+                if process.returncode not in [0, 1]:
                     raise osv.except_osv(_('Report (PDF)'),
-                                         _('wkhtmltopdf failed with error code = %s. '
+                                         _('Wkhtmltopdf failed (error code: %s). '
                                            'Message: %s') % (str(process.returncode), err))
 
                 # Save the pdf in attachment if marked
@@ -446,7 +455,7 @@ class Report(osv.Model):
             except:
                 raise
 
-        # Get and return the full pdf
+        # Return the entire document
         if len(pdfdocuments) == 1:
             content = pdfdocuments[0].read()
             pdfdocuments[0].close()

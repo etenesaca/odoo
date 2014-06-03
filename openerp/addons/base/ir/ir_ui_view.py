@@ -37,7 +37,7 @@ from lxml import etree
 import openerp
 from openerp import tools
 from openerp.http import request
-from openerp.osv import fields, osv, orm
+from openerp.osv import fields, osv, orm, api
 from openerp.tools import graph, SKIPPED_ELEMENT_TYPES
 from openerp.tools.safe_eval import safe_eval as eval
 from openerp.tools.view_validation import valid_view
@@ -141,8 +141,35 @@ class view(osv.osv):
         'model_ids': fields.one2many('ir.model.data', 'res_id', domain=[('model','=','ir.ui.view')], auto_join=True),
         'create_date': fields.datetime('Create Date', readonly=True),
         'write_date': fields.datetime('Last Modification Date', readonly=True),
+
+        'mode': fields.selection(
+            [('primary', "Base view"), ('extension', "Extension View")],
+            string="View inheritance mode", required=True,
+            help="""Only applies if this view inherits from an other one (inherit_id is not False/Null).
+
+* if extension (default), if this view is requested the closest primary view
+  is looked up (via inherit_id), then all views inheriting from it with this
+  view's model are applied
+* if primary, the closest primary view is fully resolved (even if it uses a
+  different model than this one), then this view's inheritance specs
+  (<xpath/>) are applied, and the result is used as if it were this view's
+  actual arch.
+"""),
+        'application': fields.selection([
+                ('always', "Always applied"),
+                ('enabled', "Optional, enabled"),
+                ('disabled', "Optional, disabled"),
+            ],
+            required=True, string="Application status",
+            help="""If this view is inherited,
+* if always, the view always extends its parent
+* if enabled, the view currently extends its parent but can be disabled
+* if disabled, the view currently does not extend its parent but can be enabled
+             """),
     }
     _defaults = {
+        'mode': 'primary',
+        'application': 'always',
         'priority': 16,
     }
     _order = "priority,name"
@@ -191,8 +218,14 @@ class view(osv.osv):
                         return False
         return True
 
+    _sql_constraints = [
+        ('inheritance_mode',
+         "CHECK (mode != 'extension' OR inherit_id IS NOT NULL)",
+         "Invalid inheritance mode: if the mode is 'extension', the view must"
+         " extend an other view"),
+    ]
     _constraints = [
-        (_check_xml, 'Invalid view definition', ['arch'])
+        (_check_xml, 'Invalid view definition', ['arch']),
     ]
 
     def _auto_init(self, cr, context=None):
@@ -200,6 +233,12 @@ class view(osv.osv):
         cr.execute('SELECT indexname FROM pg_indexes WHERE indexname = \'ir_ui_view_model_type_inherit_id\'')
         if not cr.fetchone():
             cr.execute('CREATE INDEX ir_ui_view_model_type_inherit_id ON ir_ui_view (model, inherit_id)')
+
+    def _compute_defaults(self, cr, uid, values, context=None):
+        if 'inherit_id' in values:
+            values.setdefault(
+                'mode', 'extension' if values['inherit_id'] else 'primary')
+        return values
 
     def create(self, cr, uid, values, context=None):
         if 'type' not in values:
@@ -209,10 +248,13 @@ class view(osv.osv):
                 values['type'] = etree.fromstring(values['arch']).tag
 
         if not values.get('name'):
-            values['name'] = "%s %s" % (values['model'], values['type'])
+            values['name'] = "%s %s" % (values.get('model'), values['type'])
 
         self.read_template.clear_cache(self)
-        return super(view, self).create(cr, uid, values, context)
+        return super(view, self).create(
+            cr, uid,
+            self._compute_defaults(cr, uid, values, context=context),
+            context=context)
 
     def write(self, cr, uid, ids, vals, context=None):
         if not isinstance(ids, (list, tuple)):
@@ -226,9 +268,35 @@ class view(osv.osv):
         if custom_view_ids:
             self.pool.get('ir.ui.view.custom').unlink(cr, uid, custom_view_ids)
 
+        if vals.get('application') == 'disabled':
+            from_always = self.search(
+                cr, uid, [('id', 'in', ids), ('application', '=', 'always')], context=context)
+            if from_always:
+                raise ValueError(
+                    "Can't disable views %s marked as always applied" % (
+                        ', '.join(map(str, from_always))))
+
         self.read_template.clear_cache(self)
-        ret = super(view, self).write(cr, uid, ids, vals, context)
+        ret = super(view, self).write(
+            cr, uid, ids,
+            self._compute_defaults(cr, uid, vals, context=context),
+            context)
         return ret
+
+    def toggle(self, cr, uid, ids, context=None):
+        """ Switches between enabled and disabled application statuses
+        """
+        for view in self.browse(cr, uid, ids, context=context):
+            if view.application == 'enabled':
+                view.write({'application': 'disabled'})
+            elif view.application == 'disabled':
+                view.write({'application': 'enabled'})
+            else:
+                raise ValueError(_("Can't toggle view %d with application %r") % (
+                    view.id,
+                    view.application,
+                ))
+
 
     def copy(self, cr, uid, id, default=None, context=None):
         if not default:
@@ -241,7 +309,7 @@ class view(osv.osv):
     # default view selection
     def default_view(self, cr, uid, model, view_type, context=None):
         """ Fetches the default view for the provided (model, view_type) pair:
-         view with no parent (inherit_id=Fase) with the lowest priority.
+         primary view with the lowest priority.
 
         :param str model:
         :param int view_type:
@@ -251,7 +319,7 @@ class view(osv.osv):
         domain = [
             ['model', '=', model],
             ['type', '=', view_type],
-            ['inherit_id', '=', False],
+            ['mode', '=', 'primary'],
         ]
         ids = self.search(cr, uid, domain, limit=1, context=context)
         if not ids:
@@ -278,15 +346,19 @@ class view(osv.osv):
         user = self.pool['res.users'].browse(cr, 1, uid, context=context)
         user_groups = frozenset(user.groups_id or ())
 
-        check_view_ids = context and context.get('check_view_ids') or (0,)
-        conditions = [['inherit_id', '=', view_id], ['model', '=', model]]
+        conditions = [
+            ['inherit_id', '=', view_id],
+            ['model', '=', model],
+            ['mode', '=', 'extension'],
+            ['application', 'in', ['always', 'enabled']],
+        ]
         if self.pool._init:
             # Module init currently in progress, only consider views from
             # modules whose code is already loaded
             conditions.extend([
                 '|',
                 ['model_ids.module', 'in', tuple(self.pool._init_modules)],
-                ['id', 'in', check_view_ids],
+                ['id', 'in', context and context.get('check_view_ids') or (0,)],
             ])
         view_ids = self.search(cr, uid, conditions, context=context)
 
@@ -442,7 +514,7 @@ class view(osv.osv):
         if context is None: context = {}
         if root_id is None:
             root_id = source_id
-        sql_inherit = self.pool.get('ir.ui.view').get_inheriting_views_arch(cr, uid, source_id, model, context=context)
+        sql_inherit = self.pool['ir.ui.view'].get_inheriting_views_arch(cr, uid, source_id, model, context=context)
         for (specs, view_id) in sql_inherit:
             specs_tree = etree.fromstring(specs.encode('utf-8'))
             if context.get('inherit_branding'):
@@ -465,7 +537,7 @@ class view(osv.osv):
 
         # if view_id is not a root view, climb back to the top.
         base = v = self.browse(cr, uid, view_id, context=context)
-        while v.inherit_id:
+        while v.mode != 'primary':
             v = v.inherit_id
         root_id = v.id
 
@@ -475,7 +547,16 @@ class view(osv.osv):
 
         # read the view arch
         [view] = self.read(cr, uid, [root_id], fields=fields, context=context)
-        arch_tree = etree.fromstring(view['arch'].encode('utf-8'))
+        view_arch = etree.fromstring(view['arch'].encode('utf-8'))
+        if not v.inherit_id:
+            arch_tree = view_arch
+        else:
+            parent_view = self.read_combined(
+                cr, uid, v.inherit_id.id, fields=fields, context=context)
+            arch_tree = etree.fromstring(parent_view['arch'])
+            self.apply_inheritance_specs(
+                cr, uid, arch_tree, view_arch, parent_view['id'], context=context)
+
 
         if context.get('inherit_branding'):
             arch_tree.attrib.update({
@@ -517,7 +598,7 @@ class view(osv.osv):
 
         modifiers = {}
         Model = self.pool.get(model)
-        if not Model:
+        if Model is None:
             self.raise_view_error(cr, user, _('Model not found: %(model)s') % dict(model=model),
                                   view_id, context)
 
@@ -536,10 +617,10 @@ class view(osv.osv):
 
                :return: True if field should be included in the result of fields_view_get
             """
-            if node.tag == 'field' and node.get('name') in Model._all_columns:
-                column = Model._all_columns[node.get('name')].column
-                if column.groups and not self.user_has_groups(
-                        cr, user, groups=column.groups, context=context):
+            if node.tag == 'field' and node.get('name') in Model._fields:
+                field = Model._fields[node.get('name')]
+                if field.groups and not self.user_has_groups(
+                        cr, user, groups=field.groups, context=context):
                     node.getparent().remove(node)
                     fields.pop(node.get('name'), None)
                     # no point processing view-level ``groups`` anymore, return
@@ -576,15 +657,8 @@ class view(osv.osv):
                 fields = xfields
             if node.get('name'):
                 attrs = {}
-                try:
-                    if node.get('name') in Model._columns:
-                        column = Model._columns[node.get('name')]
-                    else:
-                        column = Model._inherit_fields[node.get('name')][2]
-                except Exception:
-                    column = False
-
-                if column:
+                field = Model._fields.get(node.get('name'))
+                if field:
                     children = False
                     views = {}
                     for f in node:
@@ -592,7 +666,7 @@ class view(osv.osv):
                             node.remove(f)
                             ctx = context.copy()
                             ctx['base_model_name'] = model
-                            xarch, xfields = self.postprocess_and_fields(cr, user, column._obj or None, f, view_id, ctx)
+                            xarch, xfields = self.postprocess_and_fields(cr, user, field.comodel_name, f, view_id, ctx)
                             views[str(f.tag)] = {
                                 'arch': xarch,
                                 'fields': xfields
@@ -660,6 +734,36 @@ class view(osv.osv):
         orm.transfer_modifiers_to_node(modifiers, node)
         return fields
 
+    def add_on_change(self, cr, user, model_name, arch):
+        """ Add attribute on_change="1" on fields that are dependencies of
+            computed fields on the same view.
+        """
+        # map each field object to its corresponding nodes in arch
+        field_nodes = collections.defaultdict(list)
+
+        def collect(node, model):
+            if node.tag == 'field':
+                field = model._fields.get(node.get('name'))
+                if field:
+                    field_nodes[field].append(node)
+                    if field.relational:
+                        model = self.pool.get(field.comodel_name)
+            for child in node:
+                collect(child, model)
+
+        collect(arch, self.pool[model_name])
+
+        for field, nodes in field_nodes.iteritems():
+            # if field should trigger an onchange, add on_change="1" on the
+            # nodes referring to field
+            model = self.pool[field.model_name]
+            if model._has_onchange(field, field_nodes):
+                for node in nodes:
+                    if not node.get('on_change'):
+                        node.set('on_change', '1')
+
+        return arch
+
     def _disable_workflow_buttons(self, cr, user, model, node):
         """ Set the buttons in node to readonly if the user can't activate them. """
         if model is None or user == 1:
@@ -698,7 +802,7 @@ class view(osv.osv):
         """
         fields = {}
         Model = self.pool.get(model)
-        if not Model:
+        if Model is None:
             self.raise_view_error(cr, user, _('Model not found: %(model)s') % dict(model=model), view_id, context)
 
         if node.tag == 'diagram':
@@ -714,6 +818,7 @@ class view(osv.osv):
         else:
             fields = Model.fields_get(cr, user, None, context)
 
+        node = self.add_on_change(cr, user, model, node)
         fields_def = self.postprocess(cr, user, model, node, view_id, False, fields, context=context)
         node = self._disable_workflow_buttons(cr, user, model, node)
         if node.tag in ('kanban', 'tree', 'form', 'gantt'):
@@ -879,6 +984,7 @@ class view(osv.osv):
         xmlid = imd.search_read(cr, uid, domain, ['module', 'name'])[0]
         return '%s.%s' % (xmlid['module'], xmlid['name'])
 
+    @api.cr_uid_ids_context
     def render(self, cr, uid, id_or_xml_id, values=None, engine='ir.qweb', context=None):
         if isinstance(id_or_xml_id, list):
             id_or_xml_id = id_or_xml_id[0]

@@ -203,9 +203,6 @@ class sale_order(osv.osv):
             res = self.write(cr, uid, [order.id], val)
         return True
 
-
-
-
     def has_stockable_products(self, cr, uid, ids, *args):
         for order in self.browse(cr, uid, ids):
             for order_line in order.order_line:
@@ -277,7 +274,7 @@ class sale_order_line(osv.osv):
             warning_msgs = res.get('warning') and res['warning'].get('message', '') or ''
 
         products = product_obj.browse(cr, uid, product, context=context)
-        if not products.packaging:
+        if not products.packaging_ids:
             packaging = result['product_packaging'] = False
 
         if packaging:

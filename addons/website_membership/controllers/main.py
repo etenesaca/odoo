@@ -74,7 +74,7 @@ class WebsiteMembership(http.Controller):
         # displayed membership lines
         membership_line_ids = membership_line_obj.search(cr, uid, line_domain, context=context)
         membership_lines = membership_line_obj.browse(cr, uid, membership_line_ids, context=context)
-        membership_lines.sort(key=lambda x: x.membership_id.website_sequence)
+        membership_lines = sorted(membership_lines, key=lambda x: x.membership_id.website_sequence)
         partner_ids = [m.partner.id for m in membership_lines]
         google_map_partner_ids = ",".join(map(str, partner_ids))
 
@@ -105,7 +105,7 @@ class WebsiteMembership(http.Controller):
     # Do not use semantic controller due to SUPERUSER_ID
     @http.route(['/members/<partner_id>'], type='http', auth="public", website=True)
     def partners_detail(self, partner_id, **post):
-        mo = re.search('-([-0-9]+)$', str(partner_id))
+        mo = re.search('([-0-9]+)$', str(partner_id))
         if mo:
             partner_id = int(mo.group(1))
             partner = request.registry['res.partner'].browse(request.cr, SUPERUSER_ID, partner_id, context=request.context)
@@ -113,4 +113,4 @@ class WebsiteMembership(http.Controller):
                 values = {}
                 values['main_object'] = values['partner'] = partner
                 return request.website.render("website_membership.partner", values)
-        return self.customers(**post)
+        return self.members(**post)
