@@ -362,6 +362,7 @@ class account_invoice(Model):
         res['arch'] = etree.tostring(doc)
         return res
 
+<<<<<<< HEAD
     @multi
     def invoice_print(self):
         """ Print the invoice and mark it as sent, so that we can see more
@@ -387,6 +388,31 @@ class account_invoice(Model):
             default_composition_mode='comment',
             mark_invoice_as_sent=True,
         )
+=======
+    def action_invoice_sent(self, cr, uid, ids, context=None):
+        '''
+        This function opens a window to compose an email, with the edi invoice template message loaded by default
+        '''
+        assert len(ids) == 1, 'This option should only be used for a single id at a time.'
+        ir_model_data = self.pool.get('ir.model.data')
+        try:
+            template_id = ir_model_data.get_object_reference(cr, uid, 'account', 'email_template_edi_invoice')[1]
+        except ValueError:
+            template_id = False
+        try:
+            compose_form_id = ir_model_data.get_object_reference(cr, uid, 'mail', 'email_compose_message_wizard_form')[1]
+        except ValueError:
+            compose_form_id = False
+        ctx = dict()
+        ctx.update({
+            'default_model': 'account.invoice',
+            'default_res_id': ids[0],
+            'default_use_template': bool(template_id),
+            'default_template_id': template_id,
+            'default_composition_mode': 'comment',
+            'mark_invoice_as_sent': True,
+            })
+>>>>>>> odoo/saas-5
         return {
             'name': _('Compose Email'),
             'type': 'ir.actions.act_window',

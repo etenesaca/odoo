@@ -2887,7 +2887,15 @@ class BaseModel(object):
 
     def _m2m_raise_or_create_relation(self, cr, f):
         m2m_tbl, col1, col2 = f._sql_names(self)
+<<<<<<< HEAD
         self._save_relation_table(cr, m2m_tbl)
+=======
+        # do not create relations for custom fields as they do not belong to a module
+        # they will be automatically removed when dropping the corresponding ir.model.field
+        # table name for custom relation all starts with x_, see __init__
+        if not m2m_tbl.startswith('x_'):
+            self._save_relation_table(cr, m2m_tbl)
+>>>>>>> odoo/saas-5
         cr.execute("SELECT relname FROM pg_class WHERE relkind IN ('r','v') AND relname=%s", (m2m_tbl,))
         if not cr.dictfetchall():
             if f._obj not in self.pool:
@@ -4560,18 +4568,19 @@ class BaseModel(object):
         order_by = self._generate_order_by(order, query)
         from_clause, where_clause, where_clause_params = query.get_sql()
 
-        limit_str = limit and ' limit %d' % limit or ''
-        offset_str = offset and ' offset %d' % offset or ''
         where_str = where_clause and (" WHERE %s" % where_clause) or ''
-        query_str = 'SELECT "%s".id FROM ' % self._table + from_clause + where_str + order_by + limit_str + offset_str
 
         if count:
-            # /!\ the main query must be executed as a subquery, otherwise
-            # offset and limit apply to the result of count()!
-            cr.execute('SELECT count(*) FROM (%s) AS count' % query_str, where_clause_params)
+            # Ignore order, limit and offset when just counting, they don't make sense and could
+            # hurt performance
+            query_str = 'SELECT count(1) FROM ' + from_clause + where_str
+            cr.execute(query_str, where_clause_params)
             res = cr.fetchone()
             return res[0]
 
+        limit_str = limit and ' limit %d' % limit or ''
+        offset_str = offset and ' offset %d' % offset or ''
+        query_str = 'SELECT "%s".id FROM ' % self._table + from_clause + where_str + order_by + limit_str + offset_str
         cr.execute(query_str, where_clause_params)
         res = cr.fetchall()
 

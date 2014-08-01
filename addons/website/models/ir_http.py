@@ -144,6 +144,7 @@ class ir_http(orm.AbstractModel):
     def _handle_exception(self, exception=None, code=500):
         try:
             return super(ir_http, self)._handle_exception(exception)
+<<<<<<< HEAD
         except Exception:
 
             attach = self._serve_attachment()
@@ -186,6 +187,61 @@ class ir_http(orm.AbstractModel):
                 return werkzeug.wrappers.Response(html, status=code, content_type='text/html;charset=utf-8')
 
             raise
+=======
+        else:
+            try:
+                response = super(ir_http, self)._handle_exception(exception)
+                if isinstance(response, Exception):
+                    exception = response
+                else:
+                    # if parent excplicitely returns a plain response, then we don't touch it
+                    return response
+            except Exception, e:
+                exception = e
+
+            values = dict(
+                exception=exception,
+                traceback=traceback.format_exc(exception),
+            )
+            code = getattr(exception, 'code', code)
+
+            if isinstance(exception, openerp.exceptions.AccessError):
+                code = 403
+
+            if isinstance(exception, ir_qweb.QWebException):
+                values.update(qweb_exception=exception)
+                if isinstance(exception.qweb.get('cause'), openerp.exceptions.AccessError):
+                    code = 403
+
+            if isinstance(exception, werkzeug.exceptions.HTTPException) and code is None:
+                # Hand-crafted HTTPException likely coming from abort(),
+                # usually for a redirect response -> return it directly
+                return exception
+
+            if code == 500:
+                logger.error("500 Internal Server Error:\n\n%s", values['traceback'])
+                if 'qweb_exception' in values:
+                    view = request.registry.get("ir.ui.view")
+                    views = view._views_get(request.cr, request.uid, exception.qweb['template'], request.context)
+                    to_reset = [v for v in views if v.model_data_id.noupdate is True and not v.page]
+                    values['views'] = to_reset
+            elif code == 403:
+                logger.warn("403 Forbidden:\n\n%s", values['traceback'])
+
+            values.update(
+                status_message=werkzeug.http.HTTP_STATUS_CODES[code],
+                status_code=code,
+            )
+
+            if not request.uid:
+                self._auth_method_public()
+
+            try:
+                html = request.website._render('website.%s' % code, values)
+            except Exception:
+                html = request.website._render('website.http_error', values)
+            return werkzeug.wrappers.Response(html, status=code, content_type='text/html;charset=utf-8')
+>>>>>>> odoo/saas-5
 
 class ModelConverter(ir.ir_http.ModelConverter):
     def __init__(self, url_map, model=False, domain='[]'):

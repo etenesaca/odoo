@@ -115,6 +115,7 @@ instance.web.Dialog = instance.web.Widget.extend({
             this.init_dialog();
         }
         this.$buttons.insertAfter(this.$dialog_box.find(".modal-body"));
+        $('.tooltip').remove(); //remove open tooltip if any to prevent them staying when modal is opened
         //add to list of currently opened modal
         opened_modal.push(this.$dialog_box);
         return this;
@@ -183,12 +184,17 @@ instance.web.Dialog = instance.web.Widget.extend({
     */
     close: function(reason) {
         if (this.dialog_inited && !this.__tmp_dialog_hiding) {
+<<<<<<< HEAD
             this.trigger("closing", reason);
+=======
+            $('.tooltip').remove(); //remove open tooltip if any to prevent them staying when modal has disappeared
+>>>>>>> odoo/saas-5
             if (this.$el.is(":data(bs.modal)")) {     // may have been destroyed by closing signal
                 this.__tmp_dialog_hiding = true;
                 this.$dialog_box.modal('hide');
                 this.__tmp_dialog_hiding = undefined;
             }
+            this.trigger("closing", reason);
         }
     },
     _closing: function() {
@@ -1120,7 +1126,7 @@ instance.web.Client = instance.web.Widget.extend({
             }, 0);
         });
         instance.web.bus.on('click', this, function(ev) {
-            $.fn.tooltip('destroy');
+            $('.tooltip').remove();
             if (!$(ev.target).is('input[type=file]')) {
                 self.$el.find('.oe_dropdown_menu.oe_opened, .oe_dropdown_toggle.oe_opened').removeClass('oe_opened');
             }

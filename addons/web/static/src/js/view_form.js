@@ -1924,8 +1924,11 @@ instance.web.form.FormWidget = instance.web.Widget.extend(instance.web.form.Invi
         }
         options = _.extend({
                 delay: { show: 500, hide: 0 },
+<<<<<<< HEAD
                 trigger: 'hover',
                 container: container,
+=======
+>>>>>>> odoo/saas-5
                 title: function() {
                     var template = widget.template + '.tooltip';
                     if (!QWeb.has_template(template)) {

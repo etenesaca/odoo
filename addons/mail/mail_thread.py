@@ -374,7 +374,10 @@ class mail_thread(osv.AbstractModel):
 
         # automatic logging unless asked not to (mainly for various testing purpose)
         if not context.get('mail_create_nolog'):
-            self.message_post(cr, uid, thread_id, body=_('%s created') % (self._description), context=context)
+            ir_model_pool = self.pool['ir.model']
+            ids = ir_model_pool.search(cr, uid, [('model', '=', self._name)], context=context)
+            name = ir_model_pool.read(cr, uid, ids, ['name'], context=context)[0]['name']
+            self.message_post(cr, uid, thread_id, body=_('%s created') % name, context=context)
 
         # auto_subscribe: take values and defaults into account
         create_values = dict(values)
@@ -890,7 +893,7 @@ class mail_thread(osv.AbstractModel):
 
         # 1. message is a reply to an existing message (exact match of message_id)
         ref_match = thread_references and tools.reference_re.search(thread_references)
-        msg_references = thread_references.split()
+        msg_references = mail_header_msgid_re.findall(thread_references)
         mail_message_ids = mail_msg_obj.search(cr, uid, [('message_id', 'in', msg_references)], context=context)
         if ref_match and mail_message_ids:
             original_msg = mail_msg_obj.browse(cr, SUPERUSER_ID, mail_message_ids[0], context=context)
@@ -933,7 +936,7 @@ class mail_thread(osv.AbstractModel):
                                 email_from, email_to, message_id, model, thread_id, custom_values, uid)
                             return [route]
 
-        # 2. Reply to a private message
+        # 3. Reply to a private message
         if in_reply_to:
             mail_message_ids = mail_msg_obj.search(cr, uid, [
                                 ('message_id', '=', in_reply_to),
@@ -950,7 +953,7 @@ class mail_thread(osv.AbstractModel):
                         email_from, email_to, message_id, mail_message.id, custom_values, uid)
                     return [route]
 
-        # 3. Look for a matching mail.alias entry
+        # 4. Look for a matching mail.alias entry
         # Delivered-To is a safe bet in most modern MTAs, but we have to fallback on To + Cc values
         # for all the odd MTAs out there, as there is no standard header for the envelope's `rcpt_to` value.
         rcpt_tos = \
@@ -985,7 +988,7 @@ class mail_thread(osv.AbstractModel):
                         routes.append(route)
                 return routes
 
-        # 4. Fallback to the provided parameters, if they work
+        # 5. Fallback to the provided parameters, if they work
         if not thread_id:
             # Legacy: fallback to matching [ID] in the Subject
             match = tools.res_re.search(decode_header(message, 'Subject'))
@@ -1339,7 +1342,7 @@ class mail_thread(osv.AbstractModel):
             return result
         if partner and partner in obj.message_follower_ids:  # recipient already in the followers -> skip
             return result
-        if partner and partner in [val[0] for val in result[obj.id]]:  # already existing partner ID -> skip
+        if partner and partner.id in [val[0] for val in result[obj.id]]:  # already existing partner ID -> skip
             return result
         if partner and partner.email:  # complete profile: id, name <email>
             result[obj.id].append((partner.id, '%s<%s>' % (partner.name, partner.email), reason))

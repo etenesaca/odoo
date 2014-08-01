@@ -772,10 +772,15 @@ instance.web.unblockUI = function() {
 /* Bootstrap defaults overwrite */
 $.fn.tooltip.Constructor.DEFAULTS.placement = 'auto top';
 $.fn.tooltip.Constructor.DEFAULTS.html = true;
+<<<<<<< HEAD
 $.fn.tooltip.Constructor.DEFAULTS.container = 'body';
 //overwrite bootstrap tooltip method to fix bug when using placement
 //auto and the parent element does not exist anymore resulting in
 //an error. This should be remove once bootstrap fix the bug
+=======
+$.fn.tooltip.Constructor.DEFAULTS.trigger = 'hover focus click';
+//overwrite bootstrap tooltip method to prevent showing 2 tooltip at the same time
+>>>>>>> odoo/saas-5
 var bootstrap_show_function = $.fn.tooltip.Constructor.prototype.show;
 $.fn.tooltip.Constructor.prototype.show = function (e) {
     if (this.$element.parent().length === 0){
@@ -783,6 +788,18 @@ $.fn.tooltip.Constructor.prototype.show = function (e) {
     }
     return bootstrap_show_function.call(this, e);
 };
+//overwrite bootstrap tooltip init method in order to check if tooltip is in a modal or not and
+//if so it needs to have a container body in order to be visible
+var bootstrap_init_tooltip_fnct = $.fn.tooltip.Constructor.prototype.init;
+$.fn.tooltip.Constructor.prototype.init = function (type, element, options) {
+    options = options || {}
+    if ($('.modal[aria-hidden="false"]').length !== 0){
+        if (options && !options.container){
+            options = _.extend({container: 'body'},options);
+        }
+    }
+    return bootstrap_init_tooltip_fnct.call(this, type, element, options);
+}
 
 /**
  * Registry for all the client actions key: tag value: widget
