@@ -26,8 +26,7 @@ import pytz
 import urlparse
 
 import openerp
-from openerp import SUPERUSER_ID
-from openerp import tools, model, multi, one, returns
+from openerp import tools, api
 from openerp.osv import osv, fields
 from openerp.osv.expression import get_unaccent_wrapper
 from openerp.tools.translate import _
@@ -60,7 +59,7 @@ ADDRESS_FORMAT_LAYOUTS = {
 
 
 class format_address(object):
-    @model
+    @api.model
     def fields_view_get_address(self, arch):
         fmt = self.env.user.company_id.country_id.address_format or ''
         for k, v in ADDRESS_FORMAT_LAYOUTS.items():
@@ -74,7 +73,7 @@ class format_address(object):
         return arch
 
 
-@model
+@api.model
 def _tz_get(self):
     # put POSIX 'Etc/*' entries at the end to avoid confusing users - see bug 1086728
     return [(tz,tz) for tz in sorted(pytz.all_timezones, key=lambda tz: tz if not tz.startswith('Etc/') else '_')]
@@ -108,7 +107,7 @@ class res_partner_category(osv.Model):
             res.append((category.id, ' / '.join(reversed(names))))
         return res
 
-    @model
+    @api.model
     def name_search(self, name, args=None, operator='ilike', limit=100):
         args = args or []
         if name:
@@ -118,14 +117,14 @@ class res_partner_category(osv.Model):
         categories = self.search(args, limit=limit)
         return categories.name_get()
 
-    @multi
+    @api.multi
     def _name_get_fnc(self, field_name, arg):
         return dict(self.name_get())
 
     _description = 'Partner Tags'
     _name = 'res.partner.category'
     _columns = {
-        'name': fields.char('Category Name', required=True, size=64, translate=True),
+        'name': fields.char('Category Name', required=True, translate=True),
         'parent_id': fields.many2one('res.partner.category', 'Parent Category', select=True, ondelete='cascade'),
         'complete_name': fields.function(_name_get_fnc, type="char", string='Full Name'),
         'child_ids': fields.one2many('res.partner.category', 'parent_id', 'Child Categories'),
@@ -149,16 +148,16 @@ class res_partner_title(osv.osv):
     _name = 'res.partner.title'
     _order = 'name'
     _columns = {
-        'name': fields.char('Title', required=True, size=46, translate=True),
-        'shortcut': fields.char('Abbreviation', size=16, translate=True),
-        'domain': fields.selection([('partner', 'Partner'), ('contact', 'Contact')], 'Domain', required=True, size=24)
+        'name': fields.char('Title', required=True, translate=True),
+        'shortcut': fields.char('Abbreviation', translate=True),
+        'domain': fields.selection([('partner', 'Partner'), ('contact', 'Contact')], 'Domain', required=True)
     }
     _defaults = {
         'domain': 'contact',
     }
 
 
-@model
+@api.model
 def _lang_get(self):
     languages = self.env['res.lang'].search([])
     return [(language.code, language.name) for language in languages]
@@ -177,21 +176,21 @@ class res_partner(osv.Model, format_address):
             res[partner.id] = self._display_address(cr, uid, partner, context=context)
         return res
 
-    @multi
+    @api.multi
     def _get_tz_offset(self, name, args):
         return dict(
             (p.id, datetime.datetime.now(pytz.timezone(p.tz or 'GMT')).strftime('%z'))
             for p in self)
 
-    @multi
+    @api.multi
     def _get_image(self, name, args):
         return dict((p.id, tools.image_get_resized_images(p.image)) for p in self)
 
-    @one
+    @api.one
     def _set_image(self, name, value, args):
         return self.write({'image': tools.image_resize_image_big(value)})
 
-    @multi
+    @api.multi
     def _has_image(self, name, args):
         return dict((p.id, bool(p.image)) for p in self)
 
@@ -229,13 +228,13 @@ class res_partner(osv.Model, format_address):
 
     _order = "display_name"
     _columns = {
-        'name': fields.char('Name', size=128, required=True, select=True),
+        'name': fields.char('Name', required=True, select=True),
         'display_name': fields.function(_display_name, type='char', string='Name', store=_display_name_store_triggers, select=True),
         'date': fields.date('Date', select=1),
         'title': fields.many2one('res.partner.title', 'Title'),
         'parent_id': fields.many2one('res.partner', 'Related Company', select=True),
         'child_ids': fields.one2many('res.partner', 'parent_id', 'Contacts', domain=[('active','=',True)]), # force "active_test" domain to bypass _search() override
-        'ref': fields.char('Contact Reference', size=64, select=1),
+        'ref': fields.char('Internal Reference', select=1),
         'lang': fields.selection(_lang_get, 'Language',
             help="If the selected language is loaded in the system, all documents related to this contact will be printed in this language. If not, it will be English."),
         'tz': fields.selection(_tz_get,  'Timezone', size=64,
@@ -244,9 +243,9 @@ class res_partner(osv.Model, format_address):
                  "that is otherwise used to pick and render date and time values: your computer's timezone."),
         'tz_offset': fields.function(_get_tz_offset, type='char', size=5, string='Timezone offset', invisible=True),
         'user_id': fields.many2one('res.users', 'Salesperson', help='The internal user that is in charge of communicating with this contact if any.'),
-        'vat': fields.char('TIN', size=32, help="Tax Identification Number. Check the box if this contact is subjected to taxes. Used by the some of the legal statements."),
+        'vat': fields.char('TIN', help="Tax Identification Number. Check the box if this contact is subjected to taxes. Used by the some of the legal statements."),
         'bank_ids': fields.one2many('res.partner.bank', 'partner_id', 'Banks'),
-        'website': fields.char('Website', size=64, help="Website of Partner or Company"),
+        'website': fields.char('Website', help="Website of Partner or Company"),
         'comment': fields.text('Notes'),
         'category_id': fields.many2many('res.partner.category', id1='partner_id', id2='category_id', string='Tags'),
         'credit_limit': fields.float(string='Credit Limit'),
@@ -255,24 +254,22 @@ class res_partner(osv.Model, format_address):
         'customer': fields.boolean('Customer', help="Check this box if this contact is a customer."),
         'supplier': fields.boolean('Supplier', help="Check this box if this contact is a supplier. If it's not checked, purchase people will not see it when encoding a purchase order."),
         'employee': fields.boolean('Employee', help="Check this box if this contact is an Employee."),
-        'function': fields.char('Job Position', size=128),
+        'function': fields.char('Job Position'),
         'type': fields.selection([('default', 'Default'), ('invoice', 'Invoice'),
                                    ('delivery', 'Shipping'), ('contact', 'Contact'),
                                    ('other', 'Other')], 'Address Type',
             help="Used to select automatically the right address according to the context in sales and purchases documents."),
-        'street': fields.char('Street', size=128),
-        'street2': fields.char('Street2', size=128),
-        'zip': fields.char('Zip', change_default=True, size=24),
-        'city': fields.char('City', size=128),
+        'street': fields.char('Street'),
+        'street2': fields.char('Street2'),
+        'zip': fields.char('Zip', size=24, change_default=True),
+        'city': fields.char('City'),
         'state_id': fields.many2one("res.country.state", 'State', ondelete='restrict'),
         'country_id': fields.many2one('res.country', 'Country', ondelete='restrict'),
-        'country': fields.related('country_id', type='many2one', relation='res.country', string='Country',
-                                  deprecated="This field will be removed as of OpenERP 7.1, use country_id instead"),
-        'email': fields.char('Email', size=240),
-        'phone': fields.char('Phone', size=64),
-        'fax': fields.char('Fax', size=64),
-        'mobile': fields.char('Mobile', size=64),
-        'birthdate': fields.char('Birthdate', size=64),
+        'email': fields.char('Email'),
+        'phone': fields.char('Phone'),
+        'fax': fields.char('Fax'),
+        'mobile': fields.char('Mobile'),
+        'birthdate': fields.char('Birthdate'),
         'is_company': fields.boolean('Is a Company', help="Check if the contact is a company, otherwise it is a person"),
         'use_parent_address': fields.boolean('Use Company Address', help="Select this if you want to set company's address information  for this contact"),
         # image: all image fields are base64 encoded and PIL-supported
@@ -304,12 +301,12 @@ class res_partner(osv.Model, format_address):
         'commercial_partner_id': fields.function(_commercial_partner_id, type='many2one', relation='res.partner', string='Commercial Entity', store=_commercial_partner_store_triggers)
     }
 
-    @model
+    @api.model
     def _default_category(self):
         category_id = self.env.context.get('category_id', False)
         return [category_id] if category_id else False
 
-    @model
+    @api.model
     def _get_default_image(self, is_company, colorize=False):
         img_path = openerp.modules.get_module_resource(
             'base', 'static/src/img', 'company_image.png' if is_company else 'avatar.png')
@@ -330,14 +327,14 @@ class res_partner(osv.Model, format_address):
             res['arch'] = self.fields_view_get_address(cr, user, res['arch'], context=context)
         return res
 
-    @model
+    @api.model
     def _default_company(self):
         return self.env['res.company']._company_default_get('res.partner')
 
     _defaults = {
         'active': True,
-        'lang': model(lambda self: self.env.lang),
-        'tz': model(lambda self: self.env.context.get('tz', False)),
+        'lang': api.model(lambda self: self.env.lang),
+        'tz': api.model(lambda self: self.env.context.get('tz', False)),
         'customer': True,
         'category_id': _default_category,
         'company_id': _default_company,
@@ -352,14 +349,13 @@ class res_partner(osv.Model, format_address):
         (osv.osv._check_recursion, 'You cannot create recursive Partner hierarchies.', ['parent_id']),
     ]
 
-    @one
+    @api.one
     def copy(self, default=None):
         default = dict(default or {})
-        default['user_ids'] = False
         default['name'] = _('%s (copy)') % self.name
         return super(res_partner, self).copy(default)
 
-    @multi
+    @api.multi
     def onchange_type(self, is_company):
         value = {}
         value['title'] = False
@@ -392,7 +388,7 @@ class res_partner(osv.Model, format_address):
             result['value'] = {'use_parent_address': False}
         return result
 
-    @multi
+    @api.multi
     def onchange_state(self, state_id):
         if state_id:
             state = self.env['res.country.state'].browse(state_id)
@@ -522,7 +518,7 @@ class res_partner(osv.Model, format_address):
             website = urlparse.urlunparse(('http', netloc, path, params, query, fragment))
         return website
 
-    @multi
+    @api.multi
     def write(self, vals):
         # res.partner must only allow to set the company_id of a partner if it
         # is the same as the company of all users that inherit from this partner
@@ -544,7 +540,7 @@ class res_partner(osv.Model, format_address):
             self._fields_sync(partner, vals)
         return result
 
-    @model
+    @api.model
     def create(self, vals):
         if vals.get('website'):
             vals['website'] = self._clean_website(vals['website'])
@@ -598,7 +594,7 @@ class res_partner(osv.Model, format_address):
         """ Supported syntax:
             - 'Raoul <raoul@grosbedon.fr>': will find name and email address
             - otherwise: default, everything is set as the name """
-        emails = tools.email_split(text)
+        emails = tools.email_split(text.replace(' ',','))
         if emails:
             email = emails[0]
             name = text[:text.index(email)].replace('"', '').replace('<', '').strip()
@@ -755,8 +751,8 @@ class res_partner(osv.Model, format_address):
             return False
         return _('Partners: ')+self.pool['res.partner.category'].browse(cr, uid, context['category_id'], context).name
 
-    @model
-    @returns('self')
+    @api.model
+    @api.returns('self')
     def main_partner(self):
         ''' Return the main partner '''
         return self.env.ref('base.main_partner')

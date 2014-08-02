@@ -19,17 +19,20 @@
 #    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 ##############################################################################
-from functools import partial
+import itertools
 import logging
+from functools import partial
+
 from lxml import etree
 from lxml.builder import E
 
 import openerp
-from openerp import SUPERUSER_ID, BaseModel
+from openerp import SUPERUSER_ID, models
 from openerp import tools
 import openerp.exceptions
 from openerp.osv import fields, osv, expression
 from openerp.tools.translate import _
+from openerp.http import request
 
 _logger = logging.getLogger(__name__)
 
@@ -85,7 +88,7 @@ class res_groups(osv.osv):
         return where
 
     _columns = {
-        'name': fields.char('Name', size=64, required=True, translate=True),
+        'name': fields.char('Name', required=True, translate=True),
         'users': fields.many2many('res.users', 'res_groups_users_rel', 'gid', 'uid', 'Users'),
         'model_access': fields.one2many('ir.model.access', 'group_id', 'Access Controls'),
         'rule_groups': fields.many2many('ir.rule', 'rule_group_rel',
@@ -123,6 +126,7 @@ class res_groups(osv.osv):
                         _('The name of the group can not start with "-"'))
         res = super(res_groups, self).write(cr, uid, ids, vals, context=context)
         self.pool['ir.model.access'].call_cache_clearing_methods(cr)
+        self.pool['res.users'].has_group.clear_cache(self.pool['res.users'])
         return res
 
 class res_users(osv.osv):
@@ -164,14 +168,14 @@ class res_users(osv.osv):
             help='Partner-related data of the user'),
         'login': fields.char('Login', size=64, required=True,
             help="Used to log into the system"),
-        'password': fields.char('Password', size=64, invisible=True,
+        'password': fields.char('Password', size=64, invisible=True, copy=False,
             help="Keep empty if you don't want the user to be able to connect on the system."),
         'new_password': fields.function(_get_password, type='char', size=64,
             fnct_inv=_set_new_password, string='Set Password',
             help="Specify a value only when creating a user or if you're "\
                  "changing the user's password, otherwise leave empty. After "\
                  "a change of password, the user has to login again."),
-        'signature': fields.text('Signature'),
+        'signature': fields.html('Signature'),
         'active': fields.boolean('Active'),
         'action_id': fields.many2one('ir.actions.actions', 'Home Action', help="If specified, this action will be opened at log on for this user, in addition to the standard menu."),
         'groups_id': fields.many2many('res.groups', 'res_groups_users_rel', 'uid', 'gid', 'Groups'),
@@ -181,9 +185,6 @@ class res_users(osv.osv):
         'company_id': fields.many2one('res.company', 'Company', required=True,
             help='The company this user is currently working for.', context={'user_preference': True}),
         'company_ids':fields.many2many('res.company','res_company_users_rel','user_id','cid','Companies'),
-        # backward compatibility fields
-        'user_email': fields.related('email', type='char',
-            deprecated='Use the email field instead of user_email. This field will be removed with OpenERP 7.1.'),
     }
 
     def on_change_login(self, cr, uid, ids, login, context=None):
@@ -225,8 +226,14 @@ class res_users(osv.osv):
     def _get_company(self,cr, uid, context=None, uid2=False):
         if not uid2:
             uid2 = uid
-        user = self.pool['res.users'].browse(cr, uid, uid2, context)
-        return user.company_id.id
+        # Use read() to compute default company, and pass load=_classic_write to
+        # avoid useless name_get() calls. This will avoid prefetching fields
+        # while computing default values for new db columns, as the
+        # db backend may not be fully initialized yet.
+        user_data = self.pool['res.users'].read(cr, uid, uid2, ['company_id'],
+                                                context=context, load='_classic_write')
+        comp_id = user_data['company_id']
+        return comp_id or False
 
     def _get_companies(self, cr, uid, context=None):
         c = self._get_company(cr, uid, context)
@@ -326,11 +333,12 @@ class res_users(osv.osv):
                 if id in self._uid_cache[db]:
                     del self._uid_cache[db][id]
         self.context_get.clear_cache(self)
+        self.has_group.clear_cache(self)
         return res
 
     def unlink(self, cr, uid, ids, context=None):
         if 1 in ids:
-            raise osv.except_osv(_('Can not remove root user!'), _('You can not remove the admin user as it is used internally for resources created by OpenERP (updates, module installation, ...)'))
+            raise osv.except_osv(_('Can not remove root user!'), _('You can not remove the admin user as it is used internally for resources created by Odoo (updates, module installation, ...)'))
         db = cr.dbname
         if db in self._uid_cache:
             for id in ids:
@@ -372,7 +380,7 @@ class res_users(osv.osv):
                 context_key = False
             if context_key:
                 res = getattr(user, k) or False
-                if isinstance(res, BaseModel):
+                if isinstance(res, models.BaseModel):
                     res = res.id
                 result[context_key] = res or False
         return result
@@ -498,7 +506,7 @@ class res_users(osv.osv):
     def preference_save(self, cr, uid, ids, context=None):
         return {
             'type': 'ir.actions.client',
-            'tag': 'reload',
+            'tag': 'reload_context',
         }
 
     def preference_change_password(self, cr, uid, ids, context=None):
@@ -508,6 +516,7 @@ class res_users(osv.osv):
             'target': 'new',
         }
 
+    @tools.ormcache(skiparg=2)
     def has_group(self, cr, uid, group_ext_id):
         """Checks whether user belongs to given group.
 
@@ -553,12 +562,7 @@ class cset(object):
     def __iter__(self):
         return iter(self.elements)
 
-def concat(ls):
-    """ return the concatenation of a list of iterables """
-    res = []
-    for l in ls: res.extend(l)
-    return res
-
+concat = itertools.chain.from_iterable
 
 class groups_implied(osv.osv):
     _inherit = 'res.groups'
@@ -622,7 +626,7 @@ class users_implied(osv.osv):
         if values.get('groups_id'):
             # add implied groups for all users
             for user in self.browse(cr, uid, ids):
-                gs = set(concat([g.trans_implied_ids for g in user.groups_id]))
+                gs = set(concat(g.trans_implied_ids for g in user.groups_id))
                 vals = {'groups_id': [(4, g.id) for g in gs]}
                 super(users_implied, self).write(cr, uid, [user.id], vals, context)
             self.pool['ir.ui.view'].clear_cache()

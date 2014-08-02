@@ -48,7 +48,8 @@ from openerp.modules.db import create_categories
 from openerp.modules import get_module_resource
 from openerp.tools.parse_version import parse_version
 from openerp.tools.translate import _
-from openerp.osv import osv, orm, fields, fields2, api
+from openerp.osv import osv, orm, fields
+from openerp import api, fields as fields2
 
 _logger = logging.getLogger(__name__)
 
@@ -97,7 +98,7 @@ class module_category(osv.osv):
         return result
 
     _columns = {
-        'name': fields.char("Name", size=128, required=True, translate=True, select=True),
+        'name': fields.char("Name", required=True, translate=True, select=True),
         'parent_id': fields.many2one('ir.module.category', 'Parent Application', select=True),
         'child_ids': fields.one2many('ir.module.category', 'parent_id', 'Child Applications'),
         'module_nr': fields.function(_module_nbr, string='Number of Modules', type='integer'),
@@ -105,7 +106,7 @@ class module_category(osv.osv):
         'description': fields.text("Description", translate=True),
         'sequence': fields.integer('Sequence'),
         'visible': fields.boolean('Visible'),
-        'xml_id': fields.function(osv.osv.get_external_id, type='char', size=128, string="External ID"),
+        'xml_id': fields.function(osv.osv.get_external_id, type='char', string="External ID"),
     }
     _order = 'name'
 
@@ -176,8 +177,13 @@ class module(osv.osv):
                             element.set('src', "/%s/static/description/%s" % (module.name, element.get('src')))
                     res[module.id] = lxml.html.tostring(html)
             else:
-                overrides = dict(embed_stylesheet=False, doctitle_xform=False, output_encoding='unicode')
-                output = publish_string(source=module.description, settings_overrides=overrides, writer=MyWriter())
+                overrides = {
+                    'embed_stylesheet': False,
+                    'doctitle_xform': False,
+                    'output_encoding': 'unicode',
+                    'xml_declaration': False,
+                }
+                output = publish_string(source=module.description or '', settings_overrides=overrides, writer=MyWriter())
                 res[module.id] = output
         return res
 
@@ -255,26 +261,26 @@ class module(osv.osv):
         return res
 
     _columns = {
-        'name': fields.char("Technical Name", size=128, readonly=True, required=True, select=True),
+        'name': fields.char("Technical Name", readonly=True, required=True, select=True),
         'category_id': fields.many2one('ir.module.category', 'Category', readonly=True, select=True),
-        'shortdesc': fields.char('Module Name', size=64, readonly=True, translate=True),
-        'summary': fields.char('Summary', size=64, readonly=True, translate=True),
+        'shortdesc': fields.char('Module Name', readonly=True, translate=True),
+        'summary': fields.char('Summary', readonly=True, translate=True),
         'description': fields.text("Description", readonly=True, translate=True),
         'description_html': fields.function(_get_desc, string='Description HTML', type='html', method=True, readonly=True),
-        'author': fields.char("Author", size=128, readonly=True),
-        'maintainer': fields.char('Maintainer', size=128, readonly=True),
+        'author': fields.char("Author", readonly=True),
+        'maintainer': fields.char('Maintainer', readonly=True),
         'contributors': fields.text('Contributors', readonly=True),
-        'website': fields.char("Website", size=256, readonly=True),
+        'website': fields.char("Website", readonly=True),
 
         # attention: Incorrect field names !!
         #   installed_version refers the latest version (the one on disk)
         #   latest_version refers the installed version (the one in database)
         #   published_version refers the version available on the repository
         'installed_version': fields.function(_get_latest_version, string='Latest Version', type='char'),
-        'latest_version': fields.char('Installed Version', size=64, readonly=True),
-        'published_version': fields.char('Published Version', size=64, readonly=True),
+        'latest_version': fields.char('Installed Version', readonly=True),
+        'published_version': fields.char('Published Version', readonly=True),
 
-        'url': fields.char('URL', size=128, readonly=True),
+        'url': fields.char('URL', readonly=True),
         'sequence': fields.integer('Sequence'),
         'dependencies_id': fields.one2many('ir.module.module.dependency', 'module_id', 'Dependencies', readonly=True),
         'auto_install': fields.boolean('Automatic Installation',
@@ -303,7 +309,7 @@ class module(osv.osv):
         'reports_by_module': fields.function(_get_views, string='Reports', type='text', multi="meta", store=True),
         'views_by_module': fields.function(_get_views, string='Views', type='text', multi="meta", store=True),
         'application': fields.boolean('Application', readonly=True),
-        'icon': fields.char('Icon URL', size=128),
+        'icon': fields.char('Icon URL'),
         'icon_image': fields.function(_get_icon_image, string='Icon', type="binary"),
     }
 
@@ -452,11 +458,7 @@ class module(osv.osv):
         including the deletion of all database structures created by the module:
         tables, columns, constraints, etc."""
         ir_model_data = self.pool.get('ir.model.data')
-        ir_model_constraint = self.pool.get('ir.model.constraint')
         modules_to_remove = [m.name for m in self.browse(cr, uid, ids, context)]
-        modules_to_remove_ids = [m.id for m in self.browse(cr, uid, ids, context)]
-        constraint_ids = ir_model_constraint.search(cr, uid, [('module', 'in', modules_to_remove_ids)])
-        ir_model_constraint._module_data_uninstall(cr, uid, constraint_ids, context)
         ir_model_data._module_data_uninstall(cr, uid, modules_to_remove, context)
         self.write(cr, uid, ids, {'state': 'uninstalled'})
         return True
@@ -507,6 +509,7 @@ class module(osv.osv):
             'params': {'menu_id': menu_ids and menu_ids[0] or False}
         }
 
+    #TODO remove me in master, not called anymore
     def button_immediate_uninstall(self, cr, uid, ids, context=None):
         """
         Uninstall the selected module(s) immediately and fully,
@@ -589,6 +592,19 @@ class module(osv.osv):
             'summary': terp.get('summary', ''),
         }
 
+
+    def create(self, cr, uid, vals, context=None):
+        new_id = super(module, self).create(cr, uid, vals, context=context)
+        module_metadata = {
+            'name': 'module_%s' % vals['name'],
+            'model': 'ir.module.module',
+            'module': 'base',
+            'res_id': new_id,
+            'noupdate': True,
+        }
+        self.pool['ir.model.data'].create(cr, uid, module_metadata)
+        return new_id
+
     # update the list of available packages
     def update_list(self, cr, uid, context=None):
         res = [0, 0]    # [update, add]
@@ -608,7 +624,7 @@ class module(osv.osv):
                 for key in values:
                     old = getattr(mod, key)
                     updated = isinstance(values[key], basestring) and tools.ustr(values[key]) or values[key]
-                    if not old == updated:
+                    if (old or updated) and updated != old:
                         updated_values[key] = values[key]
                 if terp.get('installable', True) and mod.state == 'uninstallable':
                     updated_values['state'] = 'uninstalled'
@@ -781,7 +797,7 @@ class module_dependency(osv.Model):
     _description = "Module dependency"
 
     # the dependency name
-    name = fields2.Char(size=128)
+    name = fields2.Char(index=True)
 
     # the module that depends on it
     module_id = fields2.Many2one('ir.module.module', 'Module', ondelete='cascade')

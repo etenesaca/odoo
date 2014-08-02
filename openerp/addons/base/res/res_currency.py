@@ -43,17 +43,12 @@ class res_currency(osv.osv):
         res = {}
 
         date = context.get('date') or time.strftime('%Y-%m-%d')
-        # Convert False values to None ...
-        currency_rate_type = context.get('currency_rate_type_id') or None
-        # ... and use 'is NULL' instead of '= some-id'.
-        operator = '=' if currency_rate_type else 'is'
         for id in ids:
             cr.execute('SELECT rate FROM res_currency_rate '
                        'WHERE currency_id = %s '
                          'AND name <= %s '
-                         'AND currency_rate_type_id ' + operator + ' %s '
                        'ORDER BY name desc LIMIT 1',
-                       (id, date, currency_rate_type))
+                       (id, date))
             if cr.rowcount:
                 res[id] = cr.fetchone()[0]
             elif not raise_on_no_rate:
@@ -67,7 +62,7 @@ class res_currency(osv.osv):
     _description = "Currency"
     _columns = {
         # Note: 'code' column was removed as of v6.0, the 'name' should now hold the ISO code.
-        'name': fields.char('Currency', size=32, required=True, help="Currency Code (ISO 4217)"),
+        'name': fields.char('Currency', size=3, required=True, help="Currency Code (ISO 4217)"),
         'symbol': fields.char('Symbol', size=4, help="Currency sign, to be used when printing amounts."),
         'rate': fields.function(_current_rate, string='Current Rate', digits=(12,6),
             help='The rate of the currency to the currency of rate 1.'),
@@ -111,12 +106,12 @@ class res_currency(osv.osv):
                           ON res_currency
                           (name, (COALESCE(company_id,-1)))""")
 
-    date = fields2.Date(compute='compute_date', store=True)
+    date = fields2.Date(compute='compute_date')
 
     @api.one
     @api.depends('rate_ids.name')
     def compute_date(self):
-        self.date = self.rate_ids.name
+        self.date = self.rate_ids[:1].name
 
     def name_search(self, cr, user, name='', args=None, operator='ilike', context=None, limit=100):
         if not args:
@@ -138,11 +133,12 @@ class res_currency(osv.osv):
         reads = self.read(cr, uid, ids, ['name','symbol'], context=context, load='_classic_write')
         return [(x['id'], tools.ustr(x['name'])) for x in reads]
 
+    @api.v8
     def round(self, amount):
         """ Return `amount` rounded according to currency `self`. """
         return float_round(amount, precision_rounding=self.rounding)
 
-    @api.v7(round)
+    @api.v7
     def round(self, cr, uid, currency, amount):
         """Return ``amount`` rounded  according to ``currency``'s
            rounding rules.
@@ -153,6 +149,7 @@ class res_currency(osv.osv):
         """
         return float_round(amount, precision_rounding=currency.rounding)
 
+    @api.v8
     def compare_amounts(self, amount1, amount2):
         """ Compare `amount1` and `amount2` after rounding them according to
             `self`'s precision. An amount is considered lower/greater than
@@ -167,7 +164,7 @@ class res_currency(osv.osv):
         """
         return float_compare(amount1, amount2, precision_rounding=self.rounding)
 
-    @api.v7(compare_amounts)
+    @api.v7
     def compare_amounts(self, cr, uid, currency, amount1, amount2):
         """Compare ``amount1`` and ``amount2`` after rounding them according to the
            given currency's precision..
@@ -189,6 +186,7 @@ class res_currency(osv.osv):
         """
         return float_compare(amount1, amount2, precision_rounding=currency.rounding)
 
+    @api.v8
     def is_zero(self, amount):
         """ Return true if `amount` is small enough to be treated as zero
             according to currency `self`'s rounding rules.
@@ -200,7 +198,7 @@ class res_currency(osv.osv):
         """
         return float_is_zero(amount, precision_rounding=self.rounding)
 
-    @api.v7(is_zero)
+    @api.v7
     def is_zero(self, cr, uid, currency, amount):
         """Returns true if ``amount`` is small enough to be treated as
            zero according to ``currency``'s rounding rules.
@@ -219,10 +217,7 @@ class res_currency(osv.osv):
         if context is None:
             context = {}
         ctx = context.copy()
-        ctx.update({'currency_rate_type_id': ctx.get('currency_rate_type_from')})
         from_currency = self.browse(cr, uid, from_currency.id, context=ctx)
-
-        ctx.update({'currency_rate_type_id': ctx.get('currency_rate_type_to')})
         to_currency = self.browse(cr, uid, to_currency.id, context=ctx)
 
         if from_currency.rate == 0 or to_currency.rate == 0:
@@ -236,6 +231,33 @@ class res_currency(osv.osv):
                     'at the date: %s') % (currency_symbol, date))
         return to_currency.rate/from_currency.rate
 
+    def _compute(self, cr, uid, from_currency, to_currency, from_amount, round=True, context=None):
+        if (to_currency.id == from_currency.id):
+            if round:
+                return self.round(cr, uid, to_currency, from_amount)
+            else:
+                return from_amount
+        else:
+            rate = self._get_conversion_rate(cr, uid, from_currency, to_currency, context=context)
+            if round:
+                return self.round(cr, uid, to_currency, from_amount * rate)
+            else:
+                return from_amount * rate
+
+    @api.v7
+    def compute(self, cr, uid, from_currency_id, to_currency_id, from_amount,
+                round=True, context=None):
+        context = context or {}
+        if not from_currency_id:
+            from_currency_id = to_currency_id
+        if not to_currency_id:
+            to_currency_id = from_currency_id
+        xc = self.browse(cr, uid, [from_currency_id,to_currency_id], context=context)
+        from_currency = (xc[0].id == from_currency_id and xc[0]) or xc[1]
+        to_currency = (xc[0].id == to_currency_id and xc[0]) or xc[1]
+        return self._compute(cr, uid, from_currency, to_currency, from_amount, round, context)
+
+    @api.v8
     def compute(self, from_amount, to_currency, round=True):
         """ Convert `from_amount` from currency `self` to `to_currency`. """
         assert self, "compute from unknown currency"
@@ -248,37 +270,6 @@ class res_currency(osv.osv):
         # apply rounding
         return to_currency.round(to_amount) if round else to_amount
 
-    @api.v7(compute)
-    def compute(self, cr, uid, from_currency_id, to_currency_id, from_amount,
-                round=True, currency_rate_type_from=False, currency_rate_type_to=False, context=None):
-        context = dict(context or {})
-        if not from_currency_id:
-            from_currency_id = to_currency_id
-        if not to_currency_id:
-            to_currency_id = from_currency_id
-        xc = self.browse(cr, uid, [from_currency_id,to_currency_id], context=context)
-        from_currency = (xc[0].id == from_currency_id and xc[0]) or xc[1]
-        to_currency = (xc[0].id == to_currency_id and xc[0]) or xc[1]
-        if (to_currency_id == from_currency_id) and (currency_rate_type_from == currency_rate_type_to):
-            if round:
-                return self.round(cr, uid, to_currency, from_amount)
-            else:
-                return from_amount
-        else:
-            context.update({'currency_rate_type_from': currency_rate_type_from, 'currency_rate_type_to': currency_rate_type_to})
-            rate = self._get_conversion_rate(cr, uid, from_currency, to_currency, context=context)
-            if round:
-                return self.round(cr, uid, to_currency, from_amount * rate)
-            else:
-                return from_amount * rate
-
-class res_currency_rate_type(osv.osv):
-    _name = "res.currency.rate.type"
-    _description = "Currency Rate Type"
-    _columns = {
-        'name': fields.char('Name', size=64, required=True, translate=True),
-    }
-
 class res_currency_rate(osv.osv):
     _name = "res.currency.rate"
     _description = "Currency Rate"
@@ -287,7 +278,6 @@ class res_currency_rate(osv.osv):
         'name': fields.datetime('Date', required=True, select=True),
         'rate': fields.float('Rate', digits=(12, 6), help='The rate of the currency to the currency of rate 1'),
         'currency_id': fields.many2one('res.currency', 'Currency', readonly=True),
-        'currency_rate_type_id': fields.many2one('res.currency.rate.type', 'Currency Rate Type', help="Allow you to define your own currency rate types, like 'Average' or 'Year to Date'. Leave empty if you simply want to use the normal 'spot' rate type"),
     }
     _defaults = {
         'name': lambda *a: time.strftime('%Y-%m-%d 00:00:00'),

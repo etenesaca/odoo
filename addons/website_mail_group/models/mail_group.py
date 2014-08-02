@@ -3,6 +3,7 @@
 from openerp.osv import osv
 from openerp import tools
 from openerp.tools.translate import _
+from openerp.tools.safe_eval import safe_eval as eval
 from openerp.addons.website.models.website import slug
 
 class MailGroup(osv.Model):
@@ -12,11 +13,16 @@ class MailGroup(osv.Model):
         res = super(MailGroup, self).message_get_email_values(cr, uid, id, notif_mail=notif_mail, context=context)
         group = self.browse(cr, uid, id, context=context)
         base_url = self.pool['ir.config_parameter'].get_param(cr, uid, 'web.base.url')
-        res['headers'].update({
+        try:
+            headers = eval(res.get('headers', '{}'))
+        except Exception:
+            headers = {}
+        headers.update({
             'List-Archive': '<%s/groups/%s>' % (base_url, slug(group)),
             'List-Subscribe': '<%s/groups>' % (base_url),
             'List-Unsubscribe': '<%s/groups?unsubscribe>' % (base_url,),
         })
+        res['headers'] = '%s' % headers
         return res
 
 

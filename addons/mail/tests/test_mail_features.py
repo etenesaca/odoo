@@ -22,9 +22,8 @@
 from openerp.addons.mail.mail_mail import mail_mail
 from openerp.addons.mail.mail_thread import mail_thread
 from openerp.addons.mail.tests.common import TestMail
-from openerp.tools import mute_logger, email_split
+from openerp.tools import mute_logger, email_split, html2plaintext
 from openerp.tools.mail import html_sanitize
-
 
 class test_mail(TestMail):
 
@@ -281,7 +280,7 @@ class test_mail(TestMail):
         self.assertNotIn('res_id=%s' % group_pigs.id, url,
                          'notification email: link based on message should not contain res_id')
 
-    @mute_logger('openerp.addons.mail.mail_thread', 'openerp.osv.orm')
+    @mute_logger('openerp.addons.mail.mail_thread', 'openerp.models')
     def test_12_inbox_redirection(self):
         """ Tests designed to test the inbox redirection of emails notification URLs. """
         cr, uid, user_admin, group_pigs = self.cr, self.uid, self.user_admin, self.group_pigs
@@ -449,8 +448,8 @@ class test_mail(TestMail):
                         'message_post: mail.mail notifications should have been auto-deleted!')
 
         # Test: notifications emails: to a and b, c is email only, r is author
-        # test_emailto = ['Administrator <a@a>', 'Bert Tartopoils <b@b>']
-        test_emailto = ['"Followers of -Pigs-" <a@a>', '"Followers of -Pigs-" <b@b>']
+        test_emailto = ['"Administrator" <a@a>', '"Bert Tartopoils" <b@b>']
+        # test_emailto = ['"Followers of -Pigs-" <a@a>', '"Followers of -Pigs-" <b@b>']
         self.assertEqual(len(sent_emails), 2,
                         'message_post: notification emails wrong number of send emails')
         self.assertEqual(set([m['email_to'][0] for m in sent_emails]), set(test_emailto),
@@ -462,7 +461,7 @@ class test_mail(TestMail):
                             'message_post: notification email sent to more than one email address instead of a precise partner')
             self.assertIn(sent_email['email_to'][0], test_emailto,
                             'message_post: notification email email_to incorrect')
-            self.assertEqual(sent_email['reply_to'], '"Followers of -Pigs-" <group+pigs@schlouby.fr>',
+            self.assertEqual(sent_email['reply_to'], '"YourCompany -Pigs-" <group+pigs@schlouby.fr>',
                             'message_post: notification email reply_to incorrect')
             self.assertEqual(_subject, sent_email['subject'],
                             'message_post: notification email subject incorrect')
@@ -519,8 +518,8 @@ class test_mail(TestMail):
         self.assertFalse(self.mail_mail.search(cr, uid, [('mail_message_id', '=', msg2_id)]), 'mail.mail notifications should have been auto-deleted!')
 
         # Test: emails send by server (to a, b, c, d)
-        # test_emailto = [u'Administrator <a@a>', u'Bert Tartopoils <b@b>', u'Carine Poilvache <c@c>', u'D\xe9d\xe9 Grosbedon <d@d>']
-        test_emailto = [u'"Followers of Pigs" <a@a>', u'"Followers of Pigs" <b@b>', u'"Followers of Pigs" <c@c>', u'"Followers of Pigs" <d@d>']
+        test_emailto = [u'"Administrator" <a@a>', u'"Bert Tartopoils" <b@b>', u'"Carine Poilvache" <c@c>', u'"D\xe9d\xe9 Grosbedon" <d@d>']
+        # test_emailto = [u'"Followers of Pigs" <a@a>', u'"Followers of Pigs" <b@b>', u'"Followers of Pigs" <c@c>', u'"Followers of Pigs" <d@d>']
         # self.assertEqual(len(sent_emails), 3, 'sent_email number of sent emails incorrect')
         for sent_email in sent_emails:
             self.assertEqual(sent_email['email_from'], 'Raoul Grosbedon <r@r>',
@@ -622,7 +621,8 @@ class test_mail(TestMail):
         mail_compose.send_mail(cr, user_raoul.id, [compose_id], {'mail_post_autofollow': True, 'mail_create_nosubscribe': True})
         group_pigs.refresh()
         message = group_pigs.message_ids[0]
-
+        # Test: mail_mail: notifications have been deleted
+        self.assertFalse(self.mail_mail.search(cr, uid, [('mail_message_id', '=', message.id)]),'message_send: mail.mail message should have been auto-deleted!')
         # Test: mail.group: followers (c and d added by auto follow key; raoul not added by nosubscribe key)
         pigs_pids = [p.id for p in group_pigs.message_follower_ids]
         test_pids = [self.partner_admin_id, p_b_id, p_c_id, p_d_id]
@@ -704,6 +704,12 @@ class test_mail(TestMail):
 
         # Test: Pigs and Bird did receive their message
         test_msg_ids = self.mail_message.search(cr, uid, [], limit=2)
+        mail_ids = self.mail_mail.search(cr, uid, [('mail_message_id', '=', message2.id)])
+        mail_record_id = self.mail_mail.browse(cr, uid, mail_ids)[0]
+        self.assertTrue(mail_record_id, "'message_send: mail.mail message should have in processing mail queue'" )
+        #check mass mail state...
+        test_mail_ids = self.mail_mail.search(cr, uid, [('state', '=', 'exception')])
+        self.assertNotIn(mail_ids, test_mail_ids, 'compose wizard: Mail sending Failed!!')
         self.assertIn(message1.id, test_msg_ids, 'compose wizard: Pigs did not receive its mass mailing message')
         self.assertIn(message2.id, test_msg_ids, 'compose wizard: Bird did not receive its mass mailing message')
 
@@ -771,7 +777,7 @@ class test_mail(TestMail):
         # Test: number of unread notification = needaction on mail.message
         notif_ids = self.mail_notification.search(cr, uid, [
             ('partner_id', '=', user_admin.partner_id.id),
-            ('read', '=', False)
+            ('is_read', '=', False)
             ])
         na_count = self.mail_message._needaction_count(cr, uid, domain=[])
         self.assertEqual(len(notif_ids), na_count, 'unread notifications count does not match needaction count')
@@ -786,7 +792,7 @@ class test_mail(TestMail):
         # Test: admin has 3 new notifications (from demo), and 3 new needaction
         notif_ids = self.mail_notification.search(cr, uid, [
             ('partner_id', '=', user_admin.partner_id.id),
-            ('read', '=', False)
+            ('is_read', '=', False)
             ])
         self.assertEqual(len(notif_ids), na_admin_base + 3, 'Admin should have 3 new unread notifications')
         na_admin = self.mail_message._needaction_count(cr, uid, domain=[])
@@ -796,7 +802,7 @@ class test_mail(TestMail):
         # Test: demo has 0 new notifications (not a follower, not receiving its own messages), and 0 new needaction
         notif_ids = self.mail_notification.search(cr, uid, [
             ('partner_id', '=', user_raoul.partner_id.id),
-            ('read', '=', False)
+            ('is_read', '=', False)
             ])
         self.assertEqual(len(notif_ids), na_demo_base + 0, 'Demo should have 0 new unread notifications')
         na_demo = self.mail_message._needaction_count(cr, user_raoul.id, domain=[])

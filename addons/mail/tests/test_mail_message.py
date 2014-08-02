@@ -81,8 +81,7 @@ class TestMailMessage(TestMail):
         alias_domain = 'schlouby.fr'
         raoul_from = 'Raoul Grosbedon <raoul@raoul.fr>'
         raoul_from_alias = 'Raoul Grosbedon <raoul@schlouby.fr>'
-        raoul_reply = '"Followers of Pigs" <raoul@raoul.fr>'
-        raoul_reply_alias = '"Followers of Pigs" <group+pigs@schlouby.fr>'
+        raoul_reply_alias = '"YourCompany Pigs" <group+pigs@schlouby.fr>'
 
         # --------------------------------------------------
         # Case1: without alias_domain
@@ -91,7 +90,7 @@ class TestMailMessage(TestMail):
         self.registry('ir.config_parameter').unlink(cr, uid, param_ids)
 
         # Do: free message; specified values > default values
-        msg_id = self.mail_message.create(cr, user_raoul_id, {'reply_to': reply_to1, 'email_from': email_from1})
+        msg_id = self.mail_message.create(cr, user_raoul_id, {'same_thread': False, 'reply_to': reply_to1, 'email_from': email_from1})
         msg = self.mail_message.browse(cr, user_raoul_id, msg_id)
         # Test: message content
         self.assertIn('reply_to', msg.message_id,
@@ -118,7 +117,7 @@ class TestMailMessage(TestMail):
                       'mail_message: message_id should contain model')
         self.assertIn('%s' % self.group_pigs_id, msg.message_id,
                       'mail_message: message_id should contain res_id')
-        self.assertEqual(msg.reply_to, raoul_reply,
+        self.assertEqual(msg.reply_to, raoul_from,
                          'mail_message: incorrect reply_to: should be Raoul')
         self.assertEqual(msg.email_from, raoul_from,
                          'mail_message: incorrect email_from: should be Raoul')
@@ -152,7 +151,7 @@ class TestMailMessage(TestMail):
         msg_id = self.mail_message.create(cr, user_raoul_id, {})
         msg = self.mail_message.browse(cr, user_raoul_id, msg_id)
         # Test: generated reply_to
-        self.assertEqual(msg.reply_to, 'gateway@schlouby.fr',
+        self.assertEqual(msg.reply_to, '"YourCompany" <gateway@schlouby.fr>',
                          'mail_mail: reply_to should equal the catchall email alias')
 
         # Do: create a mail_mail
@@ -162,7 +161,7 @@ class TestMailMessage(TestMail):
         self.assertEqual(mail.reply_to, 'someone@example.com',
                          'mail_mail: reply_to should equal the rpely_to given to create')
 
-    @mute_logger('openerp.addons.base.ir.ir_model', 'openerp.osv.orm')
+    @mute_logger('openerp.addons.base.ir.ir_model', 'openerp.models')
     def test_10_mail_message_search_access_rights(self):
         """ Testing mail_message.search() using specific _search implementation """
         cr, uid, group_pigs_id = self.cr, self.uid, self.group_pigs_id
@@ -197,7 +196,7 @@ class TestMailMessage(TestMail):
         msg_ids = self.mail_message.search(cr, uid, [('subject', 'like', '_Test')])
         self.assertEqual(set([msg_id1, msg_id2, msg_id3, msg_id4, msg_id5, msg_id6, msg_id7, msg_id8]), set(msg_ids), 'mail_message search failed')
 
-    @mute_logger('openerp.addons.base.ir.ir_model', 'openerp.osv.orm')
+    @mute_logger('openerp.addons.base.ir.ir_model', 'openerp.models')
     def test_15_mail_message_check_access_rule(self):
         """ Testing mail_message.check_access_rule() """
         cr, uid = self.cr, self.uid
@@ -336,7 +335,7 @@ class TestMailMessage(TestMail):
         self.assertEqual(len(notif_ids), 1, 'mail_message set_message_read: more than one notification created')
         # Test: notification read
         notif = self.mail_notification.browse(cr, uid, notif_ids[0])
-        self.assertTrue(notif['read'], 'mail_notification read failed')
+        self.assertTrue(notif['is_read'], 'mail_notification read failed')
         self.assertFalse(msg.to_read, 'mail_message read failed')
 
         # Do: Raoul reads msg
@@ -347,7 +346,7 @@ class TestMailMessage(TestMail):
         self.assertEqual(len(notif_ids), 1, 'mail_message set_message_read: more than one notification created')
         # Test: notification read
         notif = self.mail_notification.browse(cr, uid, notif_ids[0])
-        self.assertTrue(notif['read'], 'mail_notification starred failed')
+        self.assertTrue(notif['is_read'], 'mail_notification starred failed')
         self.assertFalse(msg_raoul.to_read, 'mail_message starred failed')
 
         # Do: Admin unreads msg
@@ -384,7 +383,7 @@ class TestMailMessage(TestMail):
         self.assertEqual(set(msg.vote_user_ids), set([self.user_raoul]), 'mail_message vote: after unvoting, Bert should be in the voter')
         self.assertEqual(set(msg_raoul.vote_user_ids), set([self.user_raoul]), 'mail_message vote: after unvoting, Bert should be in the voter')
 
-    @mute_logger('openerp.addons.base.ir.ir_model', 'openerp.osv.orm')
+    @mute_logger('openerp.addons.base.ir.ir_model', 'openerp.models')
     def test_50_mail_flow_access_rights(self):
         """ Test a Chatter-looks alike flow to test access rights """
         cr, uid = self.cr, self.uid
