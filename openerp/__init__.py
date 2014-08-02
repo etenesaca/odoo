@@ -81,15 +81,11 @@ import tools
 import workflow
 
 #----------------------------------------------------------
-# Model classes, fields, api decorators, and environment
+# Model classes, fields, api decorators, and translations
 #----------------------------------------------------------
-from openerp.osv.orm import BaseModel, AbstractModel, Model, TransientModel
-from openerp.osv import fields2 as fields
-from openerp.osv.fields2 import Boolean, Integer, Float, Char, Text, Html, \
-    Date, Datetime, Binary, Selection, Reference, Many2one, One2many, Many2many
-from openerp.osv import api
-from openerp.osv.api import model, multi, one, constrains, depends, onchange, returns
-from openerp.osv.env import Environment
+from . import models
+from . import fields
+from . import api
 from openerp.tools.translate import _
 
 #----------------------------------------------------------

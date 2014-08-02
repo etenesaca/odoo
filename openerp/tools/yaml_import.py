@@ -121,7 +121,7 @@ class YamlInterpreter(object):
                              'time': time,
                              'datetime': datetime,
                              'timedelta': timedelta}
-        self.env = openerp.Environment(self.cr, self.uid, self.context)
+        self.env = openerp.api.Environment(self.cr, self.uid, self.context)
 
     def _log(self, *args, **kwargs):
         _logger.log(self.loglevel, *args, **kwargs)
@@ -394,6 +394,7 @@ class YamlInterpreter(object):
         fields = fields or {}
         if view is not False:
             fg = view_info['fields']
+            onchange_spec = model._onchange_spec(self.cr, SUPERUSER_ID, view_info, context=self.context)
             # gather the default values on the object. (Can't use `fields´ as parameter instead of {} because we may
             # have references like `base.main_company´ in the yaml file and it's not compatible with the function)
             defaults = default and model._add_missing_default_values(self.cr, SUPERUSER_ID, {}, context=self.context) or {}
@@ -433,10 +434,8 @@ class YamlInterpreter(object):
 
                     if el.attrib['on_change'] in ('1', 'true'):
                         # New-style on_change
-                        # TODO: this call does not take into account subrecords
-                        # (one2many and many2many fields)
                         recs = model.browse(self.cr, SUPERUSER_ID, [], self.context)
-                        result = recs.onchange(record_dict, field_name, [])
+                        result = recs.onchange(record_dict, field_name, onchange_spec)
 
                     else:
                         match = re.match("([a-z_1-9A-Z]+)\((.*)\)", el.attrib['on_change'])
@@ -557,7 +556,7 @@ class YamlInterpreter(object):
             self.uid = self.get_id(node.uid)
         if node.noupdate:
             self.noupdate = node.noupdate
-        self.env = openerp.Environment(self.cr, self.uid, self.context)
+        self.env = openerp.api.Environment(self.cr, self.uid, self.context)
 
     def process_python(self, node):
         python, statements = node.items()[0]
@@ -963,20 +962,5 @@ def yaml_import(cr, module, yamlfile, kind, idref=None, mode='init', noupdate=Fa
 
 # keeps convention of convert.py
 convert_yaml_import = yaml_import
-
-def threaded_yaml_import(db_name, module_name, file_name, delay=0):
-    def f():
-        time.sleep(delay)
-        cr = None
-        fp = None
-        try:
-            cr = sql_db.db_connect(db_name).cursor()
-            fp = misc.file_open(file_name)
-            convert_yaml_import(cr, module_name, fp, {}, 'update', True)
-        finally:
-            if cr: cr.close()
-            if fp: fp.close()
-    threading.Thread(target=f).start()
-
 
 # vim:expandtab:smartindent:tabstop=4:softtabstop=4:shiftwidth=4:

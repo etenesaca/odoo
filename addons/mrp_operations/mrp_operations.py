@@ -38,15 +38,6 @@ class stock_move(osv.osv):
         'move_dest_id_lines': fields.one2many('stock.move','move_dest_id', 'Children Moves')
     }
 
-    def copy(self, cr, uid, id, default=None, context=None):
-        if default is None:
-            default = {}
-        default.update({
-            'move_dest_id_lines': [],
-        })
-        return super(stock_move, self).copy(cr, uid, id, default, context)
-
-
 class mrp_production_workcenter_line(osv.osv):
 
     def _get_date_end(self, cr, uid, ids, field_name, arg, context=None):
@@ -84,7 +75,7 @@ class mrp_production_workcenter_line(osv.osv):
     _order = "sequence, date_planned"
 
     _columns = {
-       'state': fields.selection([('draft','Draft'),('cancel','Cancelled'),('pause','Pending'),('startworking', 'In Progress'),('done','Finished')],'Status', readonly=True,
+       'state': fields.selection([('draft','Draft'),('cancel','Cancelled'),('pause','Pending'),('startworking', 'In Progress'),('done','Finished')],'Status', readonly=True, copy=False,
                                  help="* When a work order is created it is set in 'Draft' status.\n" \
                                        "* When user sets work order in start mode that time it will be set in 'In Progress' status.\n" \
                                        "* When work order is in running mode, during that time if user wants to stop or to make changes in order then can set in 'Pending' status.\n" \
@@ -372,7 +363,7 @@ class mrp_production(osv.osv):
 class mrp_operations_operation_code(osv.osv):
     _name="mrp_operations.operation.code"
     _columns={
-        'name': fields.char('Operation Name',size=64, required=True),
+        'name': fields.char('Operation Name', required=True),
         'code': fields.char('Code', size=16, required=True),
         'start_stop': fields.selection([('start','Start'),('pause','Pause'),('resume','Resume'),('cancel','Cancelled'),('done','Done')], 'Status', required=True),
     }
@@ -556,4 +547,3 @@ class mrp_operations_operation(osv.osv):
     }
 
 # vim:expandtab:smartindent:tabstop=4:softtabstop=4:shiftwidth=4:
-

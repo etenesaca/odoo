@@ -77,8 +77,8 @@ class account_analytic_plan(osv.osv):
     _name = "account.analytic.plan"
     _description = "Analytic Plan"
     _columns = {
-        'name': fields.char('Analytic Plan', size=64, required=True, select=True),
-        'plan_ids': fields.one2many('account.analytic.plan.line', 'plan_id', 'Analytic Plans'),
+        'name': fields.char('Analytic Plan', required=True, select=True),
+        'plan_ids': fields.one2many('account.analytic.plan.line', 'plan_id', 'Analytic Plans', copy=True),
     }
 
 
@@ -88,7 +88,7 @@ class account_analytic_plan_line(osv.osv):
     _order = "sequence, id"
     _columns = {
         'plan_id': fields.many2one('account.analytic.plan','Analytic Plan',required=True),
-        'name': fields.char('Plan Name', size=64, required=True, select=True),
+        'name': fields.char('Axis Name', required=True, select=True),
         'sequence': fields.integer('Sequence'),
         'root_analytic_id': fields.many2one('account.analytic.account', 'Root Account', help="Root account of this plan.", required=False),
         'min_required': fields.float('Minimum Allowed (%)'),
@@ -104,10 +104,10 @@ class account_analytic_plan_instance(osv.osv):
     _name = "account.analytic.plan.instance"
     _description = "Analytic Plan Instance"
     _columns = {
-        'name': fields.char('Analytic Distribution', size=64),
+        'name': fields.char('Analytic Distribution'),
         'code': fields.char('Distribution Code', size=16),
         'journal_id': fields.many2one('account.analytic.journal', 'Analytic Journal' ),
-        'account_ids': fields.one2many('account.analytic.plan.instance.line', 'plan_id', 'Account Id'),
+        'account_ids': fields.one2many('account.analytic.plan.instance.line', 'plan_id', 'Account Id', copy=True),
         'account1_ids': one2many_mod2('account.analytic.plan.instance.line', 'plan_id', 'Account1 Id'),
         'account2_ids': one2many_mod2('account.analytic.plan.instance.line', 'plan_id', 'Account2 Id'),
         'account3_ids': one2many_mod2('account.analytic.plan.instance.line', 'plan_id', 'Account3 Id'),
@@ -130,13 +130,6 @@ class account_analytic_plan_instance(osv.osv):
         res = super(account_analytic_plan_instance, self).search(cr, user, args, offset=offset, limit=limit, order=order,
                                                                  context=context, count=count)
         return res
-
-    def copy(self, cr, uid, id, default=None, context=None):
-        if not default:
-            default = {}
-        default.update({'account1_ids':False, 'account2_ids':False, 'account3_ids':False,
-                'account4_ids':False, 'account5_ids':False, 'account6_ids':False})
-        return super(account_analytic_plan_instance, self).copy(cr, uid, id, default, context=context)
 
     def _default_journal(self, cr, uid, context=None):
         if context is None:
@@ -399,7 +392,7 @@ class account_invoice(osv.osv):
                 if inv.type in ('in_invoice', 'in_refund'):
                     ref = inv.reference
                 else:
-                    ref = self._convert_ref(cr, uid, inv.number)
+                    ref = self._convert_ref(inv.number)
                 obj_move_line = acct_ins_obj.browse(cr, uid, il['analytics_id'], context=context)
                 ctx = context.copy()
                 ctx.update({'date': inv.date_invoice})

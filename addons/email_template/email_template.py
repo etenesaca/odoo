@@ -217,14 +217,14 @@ class email_template(osv.osv):
         'name': fields.char('Name'),
         'model_id': fields.many2one('ir.model', 'Applies to', help="The kind of document with with this template can be used"),
         'model': fields.related('model_id', 'model', type='char', string='Related Document Model',
-                                size=128, select=True, store=True, readonly=True),
+                                 select=True, store=True, readonly=True),
         'lang': fields.char('Language',
                             help="Optional translation language (ISO code) to select when sending out an email. "
                                  "If not set, the english version will be used. "
                                  "This should usually be a placeholder expression "
-                                 "that provides the appropriate language code, e.g. "
-                                 "${object.partner_id.lang.code}.",
-                            placeholder="${object.partner_id.lang.code}"),
+                                 "that provides the appropriate language, e.g. "
+                                 "${object.partner_id.lang}.",
+                            placeholder="${object.partner_id.lang}"),
         'user_signature': fields.boolean('Add Signature',
                                          help="If checked, the user's signature will be appended to the text version "
                                               "of the message"),
@@ -251,10 +251,10 @@ class email_template(osv.osv):
                                    help="Name to use for the generated report file (may contain placeholders)\n"
                                         "The extension can be omitted and will then come from the report type."),
         'report_template': fields.many2one('ir.actions.report.xml', 'Optional report to print and attach'),
-        'ref_ir_act_window': fields.many2one('ir.actions.act_window', 'Sidebar action', readonly=True,
+        'ref_ir_act_window': fields.many2one('ir.actions.act_window', 'Sidebar action', readonly=True, copy=False,
                                             help="Sidebar action to make this template available on records "
                                                  "of the related document model"),
-        'ref_ir_value': fields.many2one('ir.values', 'Sidebar Button', readonly=True,
+        'ref_ir_value': fields.many2one('ir.values', 'Sidebar Button', readonly=True, copy=False,
                                        help="Sidebar button to open the sidebar action"),
         'attachment_ids': fields.many2many('ir.attachment', 'email_template_attachment_rel', 'email_template_id',
                                            'attachment_id', 'Attachments',
@@ -335,13 +335,8 @@ class email_template(osv.osv):
 
     def copy(self, cr, uid, id, default=None, context=None):
         template = self.browse(cr, uid, id, context=context)
-        if default is None:
-            default = {}
-        default = default.copy()
-        default.update(
-            name=_("%s (copy)") % (template.name),
-            ref_ir_act_window=False,
-            ref_ir_value=False)
+        default = dict(default or {},
+                       name=_("%s (copy)") % template.name)
         return super(email_template, self).copy(cr, uid, id, default, context)
 
     def build_expression(self, field_name, sub_field_name, null_value):
@@ -543,6 +538,7 @@ class email_template(osv.osv):
                 'res_model': 'mail.message',
                 'res_id': mail.mail_message_id.id,
             }
+            context = dict(context)
             context.pop('default_type', None)
             attachment_ids.append(ir_attachment.create(cr, uid, attachment_data, context=context))
         if attachment_ids:

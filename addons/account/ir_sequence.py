@@ -18,8 +18,8 @@
 #    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 ##############################################################################
-
-from openerp.osv import fields, osv, api
+from openerp import api
+from openerp.osv import fields, osv
 
 class ir_sequence_fiscalyear(osv.osv):
     _name = 'account.sequence.fiscalyear'
@@ -43,7 +43,7 @@ class ir_sequence(osv.osv):
     _inherit = 'ir.sequence'
     _columns = {
         'fiscal_ids': fields.one2many('account.sequence.fiscalyear',
-            'sequence_main_id', 'Sequences')
+            'sequence_main_id', 'Sequences', copy=True)
     }
 
     @api.cr_uid_ids_context

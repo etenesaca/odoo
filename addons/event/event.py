@@ -22,10 +22,10 @@ from datetime import timedelta
 
 import pytz
 
-from openerp import Model, fields, api, _
+from openerp import models, fields, api, _
 from openerp.exceptions import Warning
 
-class event_type(Model):
+class event_type(models.Model):
     """ Event Type """
     _name = 'event.type'
 
@@ -42,7 +42,7 @@ class event_type(Model):
         help="It will select this default maximum value when you choose this event")
 
 
-class event_event(Model):
+class event_event(models.Model):
     """Event"""
     _name = 'event.event'
     _inherit = ['mail.thread', 'ir.needaction_mixin']
@@ -55,7 +55,7 @@ class event_event(Model):
         readonly=False, states={'done': [('readonly', True)]})
     type = fields.Many2one('event.type', string='Type of Event',
         readonly=False, states={'done': [('readonly', True)]})
-    seats_max = fields.Integer(string='Maximum Avalaible Seats', oldname='register_max',
+    seats_max = fields.Integer(string='Maximum Available Seats', oldname='register_max',
         readonly=True, states={'draft': [('readonly', False)]},
         help="You can for each event define a maximum registration level. If you have too much registrations you are not able to confirm your event. (put 0 to ignore this rule )")
     seats_min = fields.Integer(string='Minimum Reserved Seats', oldname='register_min',
@@ -145,11 +145,15 @@ class event_event(Model):
             ('cancel', 'Cancelled'),
             ('confirm', 'Confirmed'),
             ('done', 'Done')
-        ], string='Status', default='draft', readonly=True, required=True,
+        ], string='Status', default='draft', readonly=True, required=True, copy=False,
         help="If event is created, the status is 'Draft'. If event is confirmed for the particular dates the status is set to 'Confirmed'. If the event is over, the status is set to 'Done'. If event is cancelled the status is set to 'Cancelled'.")
-    email_registration_id = fields.Many2one('email.template', string='Registration Confirmation Email',
+    email_registration_id = fields.Many2one(
+        'email.template', string='Registration Confirmation Email',
+        domain=[('model', '=', 'event.registration')],
         help='This field contains the template of the mail that will be automatically sent each time a registration for this event is confirmed.')
-    email_confirmation_id = fields.Many2one('email.template', string='Event Confirmation Email',
+    email_confirmation_id = fields.Many2one(
+        'email.template', string='Event Confirmation Email',
+        domain=[('model', '=', 'event.registration')],
         help="If you set an email template, each participant will receive this email announcing the confirmation of the event.")
     reply_to = fields.Char(string='Reply-To Email',
         readonly=False, states={'done': [('readonly', True)]},
@@ -185,12 +189,15 @@ class event_event(Model):
             for reg in self.registration_ids
         )
 
-    @api.one
+    @api.multi
     @api.depends('name', 'date_begin', 'date_end')
-    def _compute_display_name(self):
-        dates = [dt.split(' ')[0] for dt in [self.date_begin, self.date_end] if dt]
-        dates = sorted(set(dates))
-        self.display_name = '%s (%s)' % (self.name, ' - '.join(dates))
+    def name_get(self):
+        result = []
+        for event in self:
+            dates = [dt.split(' ')[0] for dt in [event.date_begin, event.date_end] if dt]
+            dates = sorted(set(dates))
+            result.append((event.id, '%s (%s)' % (event.name, ' - '.join(dates))))
+        return result
 
     @api.one
     @api.constrains('seats_max', 'seats_available')
@@ -203,13 +210,6 @@ class event_event(Model):
     def _check_closing_date(self):
         if self.date_end < self.date_begin:
             raise Warning(_('Closing Date cannot be set before Beginning Date.'))
-
-    @api.one
-    def copy(self, default):
-        """ Reset the state and the registrations while copying an event """
-        default['state'] = 'draft'
-        default['registration_ids'] = []
-        return super(event_event, self).copy(default)
 
     @api.one
     def button_draft(self):
@@ -231,7 +231,7 @@ class event_event(Model):
     def confirm_event(self):
         if self.email_confirmation_id:
             # send reminder that will confirm the event for all the people that were already confirmed
-            regs = self.registration_ids.filter(lambda reg: reg.state not in ('draft', 'cancel'))
+            regs = self.registration_ids.filtered(lambda reg: reg.state not in ('draft', 'cancel'))
             regs.mail_user_confirm()
         self.state = 'confirm'
 
@@ -245,7 +245,7 @@ class event_event(Model):
         """ Subscribe the current user to a given event """
         user = self.env.user
         num_of_seats = int(self._context.get('ticket', 1))
-        regs = self.registration_ids.filter(lambda reg: reg.user_id == user)
+        regs = self.registration_ids.filtered(lambda reg: reg.user_id == user)
         # the subscription is done as SUPERUSER_ID because in case we share the
         # kanban view, we want anyone to be able to subscribe
         if not regs:
@@ -266,7 +266,7 @@ class event_event(Model):
         # the unsubscription is done as SUPERUSER_ID because in case we share
         # the kanban view, we want anyone to be able to unsubscribe
         user = self.env.user
-        regs = self.sudo().registration_ids.filter(lambda reg: reg.user_id == user)
+        regs = self.sudo().registration_ids.filtered(lambda reg: reg.user_id == user)
         regs.button_reg_cancel()
 
     @api.onchange('type')
@@ -285,9 +285,9 @@ class event_event(Model):
             self.date_end = fields.Datetime.to_string(date_begin + timedelta(hours=1))
 
 
-class event_registration(Model):
-    """Event Registration"""
-    _name= 'event.registration'
+class event_registration(models.Model):
+    _name = 'event.registration'
+    _description = 'Event Registration'
     _inherit = ['mail.thread', 'ir.needaction_mixin']
     _order = 'name, create_date desc'
 
@@ -317,7 +317,7 @@ class event_registration(Model):
             ('cancel', 'Cancelled'),
             ('open', 'Confirmed'),
             ('done', 'Attended'),
-        ], string='Status', default='draft', readonly=True)
+        ], string='Status', default='draft', readonly=True, copy=False)
     email = fields.Char(string='Email')
     phone = fields.Char(string='Phone')
     name = fields.Char(string='Name', select=True)

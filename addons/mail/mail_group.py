@@ -23,6 +23,7 @@ import openerp
 import openerp.tools as tools
 from openerp.osv import osv
 from openerp.osv import fields
+from openerp.tools.safe_eval import safe_eval as eval
 from openerp import SUPERUSER_ID
 from openerp.tools.translate import _
 
@@ -45,7 +46,7 @@ class mail_group(osv.Model):
         return self.write(cr, uid, [id], {'image': tools.image_resize_image_big(value)}, context=context)
 
     _columns = {
-        'name': fields.char('Name', size=64, required=True, translate=True),
+        'name': fields.char('Name', required=True, translate=True),
         'description': fields.text('Description'),
         'menu_id': fields.many2one('ir.ui.menu', string='Related Menu', required=True, ondelete="cascade"),
         'public': fields.selection([('public', 'Public'), ('private', 'Private'), ('groups', 'Selected Group Only')], 'Privacy', required=True,
@@ -216,23 +217,24 @@ class mail_group(osv.Model):
             return []
         else:
             return super(mail_group, self).get_suggested_thread(cr, uid, removed_suggested_threads, context)
-<<<<<<< HEAD
-=======
 
     def message_get_email_values(self, cr, uid, id, notif_mail=None, context=None):
         res = super(mail_group, self).message_get_email_values(cr, uid, id, notif_mail=notif_mail, context=context)
         group = self.browse(cr, uid, id, context=context)
-        headers = res.setdefault('headers', {})
+        try:
+            headers = eval(res.get('headers', '{}'))
+        except Exception:
+            headers = {}
         headers['Precedence'] = 'list'
         # avoid out-of-office replies from MS Exchange
         # http://blogs.technet.com/b/exchange/archive/2006/10/06/3395024.aspx
         headers['X-Auto-Response-Suppress'] = 'OOF'
-        if group.alias_domain:
+        if group.alias_domain and group.alias_name:
             headers['List-Id'] = '%s.%s' % (group.alias_name, group.alias_domain)
             headers['List-Post'] = '<mailto:%s@%s>' % (group.alias_name, group.alias_domain)
             # Avoid users thinking it was a personal message
             # X-Forge-To: will replace To: after SMTP envelope is determined by ir.mail.server
             list_to = '"%s" <%s@%s>' % (group.name, group.alias_name, group.alias_domain)
             headers['X-Forge-To'] = list_to
+        res['headers'] = '%s' % headers
         return res
->>>>>>> odoo/saas-5

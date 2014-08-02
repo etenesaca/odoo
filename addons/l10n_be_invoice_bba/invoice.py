@@ -66,18 +66,20 @@ class account_invoice(osv.osv):
         return True
 
     def onchange_partner_id(self, cr, uid, ids, type, partner_id,
-            date_invoice=False, payment_term=False, partner_bank_id=False, company_id=False):
+                            date_invoice=False, payment_term=False,
+                            partner_bank_id=False, company_id=False,
+                            context=None):
         result = super(account_invoice, self).onchange_partner_id(cr, uid, ids, type, partner_id,
-            date_invoice, payment_term, partner_bank_id, company_id)
+            date_invoice, payment_term, partner_bank_id, company_id, context)
 #        reference_type = self.default_get(cr, uid, ['reference_type'])['reference_type']
 #        _logger.warning('partner_id %s' % partner_id)
         reference = False
         reference_type = 'none'
         if partner_id:
             if (type == 'out_invoice'):
-                reference_type = self.pool.get('res.partner').browse(cr, uid, partner_id).out_inv_comm_type
+                reference_type = self.pool.get('res.partner').browse(cr, uid, partner_id, context=context).out_inv_comm_type
                 if reference_type:
-                    reference = self.generate_bbacomm(cr, uid, ids, type, reference_type, partner_id, '', context={})['value']['reference']
+                    reference = self.generate_bbacomm(cr, uid, ids, type, reference_type, partner_id, '', context=context)['value']['reference']
         res_update = {
             'reference_type': reference_type or 'none',
             'reference': reference,
@@ -143,7 +145,7 @@ class account_invoice(osv.osv):
                 elif algorithm == 'random':
                     if not self.check_bbacomm(reference):
                         base = random.randint(1, 9999999999)
-                        bbacomm = str(base).rjust(7, '0')
+                        bbacomm = str(base).rjust(10, '0')
                         base = int(bbacomm)
                         mod = base % 97 or 97
                         mod = str(mod).rjust(2, '0')
@@ -151,7 +153,7 @@ class account_invoice(osv.osv):
                 else:
                     raise osv.except_osv(_('Error!'),
                         _("Unsupported Structured Communication Type Algorithm '%s' !" \
-                          "\nPlease contact your OpenERP support channel.") % algorithm)
+                          "\nPlease contact your Odoo support channel.") % algorithm)
         return {'value': {'reference': reference}}
 
     def create(self, cr, uid, vals, context=None):
@@ -223,7 +225,7 @@ class account_invoice(osv.osv):
         return super(account_invoice, self).copy(cr, uid, id, default, context=context)
 
     _columns = {
-        'reference': fields.char('Communication', size=64, help="The partner reference of this invoice."),
+        'reference': fields.char('Communication', help="The partner reference of this invoice."),
         'reference_type': fields.selection(_get_reference_type, 'Communication Type',
             required=True),
     }

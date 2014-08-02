@@ -44,8 +44,9 @@
         <record id="product_template_form_view" model="ir.ui.view">
             <field name="name">product.template.common.form</field>
             <field name="model">product.template</field>
+            <field name="mode">primary</field>
             <field name="arch" type="xml">
-                <form string="Product" version="7.0">
+                <form string="Product">
                     <field name="is_product_variant" invisible="1"/>
                     <sheet>
                         <field name="id" invisible="True"/>
@@ -70,7 +71,7 @@
                                     <group>
                                         <field name="type"/>
                                         <field name="uom_id" on_change="onchange_uom(uom_id,uom_po_id)" groups="product.group_uom"/>
-                                        <field name="lst_price"/>
+                                        <field name="list_price"/>
                                     </group>
                                     <group>
                                         <field name="active"/>
@@ -110,7 +111,7 @@
                                     </group>
                                 </group>
                             </page>
-                            <page string="Sales" attrs="{'invisible':[('sale_ok','=',False)]}">
+                            <page string="Sales" attrs="{'invisible':[('sale_ok','=',False)]}" name="sales">
                                 <group name="sale">
                                     <group name="sale_condition" string="Sale Conditions" colspan="3">
                                         <label for="warranty"/>
@@ -299,7 +300,7 @@
 
         <!-- product product -->
 
-        <menuitem id="prod_config_main" name="Product Variants" parent="base.menu_base_config" sequence="70" groups="base.group_no_one"/>
+        <menuitem id="prod_config_main" name="Product Categories &amp; Attributes" parent="base.menu_base_config" sequence="70" groups="base.group_no_one"/>
 
         <record id="product_product_tree_view" model="ir.ui.view">
             <field name="name">product.product.tree</field>
@@ -318,7 +319,6 @@
                     <field name="state" invisible="1"/>
                     <field name="product_tmpl_id" invisible="1"/>
                 </tree>
-
             </field>
         </record>
 
@@ -332,6 +332,9 @@
                 <form position="attributes">
                     <attribute name="string">Product Variant</attribute>
                 </form>
+                <field name="list_price" position="attributes">
+                   <attribute name="name">lst_price</attribute>
+                </field>
                 <field name="name" position="replace">
                     <field name="name" attrs="{'invisible': [('id', '!=', False)]}"/>
                     <field name="product_tmpl_id" class="oe_inline" readonly="1" attrs="{'invisible': [('id', '=', False)], 'required': [('id', '!=', False)]}"/>
@@ -345,17 +348,80 @@
         <record id="product_kanban_view" model="ir.ui.view">
             <field name="name">Product Kanban</field>
             <field name="model">product.product</field>
-            <field name="mode">primary</field>
-            <field name="inherit_id" ref="product.product_template_kanban_view"/>
             <field name="arch" type="xml">
-                <field name="name" position="after">
-                    <field name="attribute_value_ids"/>
-                </field>
-                <xpath expr="//img[@class='oe_kanban_image']" position="replace">
-                    <img t-att-src="kanban_image('product.product', 'image_small', record.id.value)" class="oe_kanban_image"/>
-                </xpath>
+                <kanban>
+                    <field name="image_small"/>
+                    <field name="lst_price"/>
+                    <templates>
+                        <t t-name="kanban-box">
+                            <div class="oe_kanban_vignette oe_semantic_html_override">
+                                <a type="open"><img t-att-src="kanban_image('product.product', 'image_small', record.id.value)" class="oe_kanban_image"/></a>
+                                <div class="oe_kanban_details">
+                                    <h4>
+                                        <a type="open">
+                                            <field name="name"/>
+                                            <field name="attribute_value_ids"/>
+                                        </a>
+                                    </h4>
+                                    <div name="tags"/>
+                                    <ul>
+                                        <li>Price: <field name="lst_price"></field></li>
+                                    </ul>
+                                </div>
+                            </div>
+                        </t>
+                    </templates>
+                </kanban>
             </field>
         </record>
+
+        <!--  -->
+
+        <record id="attribute_tree_view" model="ir.ui.view">
+            <field name="name">product.attribute.tree</field>
+            <field name="model">product.attribute</field>
+            <field name="arch" type="xml">
+                <tree string="Variant Values" editable="top">
+                    <field name="name"/>
+                </tree>
+            </field>
+        </record>
+
+        <record id="attribute_action" model="ir.actions.act_window">
+            <field name="name">Attributes</field>
+            <field name="type">ir.actions.act_window</field>
+            <field name="res_model">product.attribute</field>
+            <field name="view_mode">tree</field>
+            <field name="view_type">form</field>
+        </record>
+
+        <menuitem action="attribute_action"
+            id="menu_attribute_action"
+            parent="product.prod_config_main" sequence="9" />
+
+        <record id="variants_tree_view" model="ir.ui.view">
+            <field name="name">product.attribute.value.tree</field>
+            <field name="model">product.attribute.value</field>
+            <field name="arch" type="xml">
+                <tree string="Variant Values" editable="top">
+                    <field name="sequence" widget="handle"/>
+                    <field name="attribute_id"/>
+                    <field name="name"/>
+                </tree>
+            </field>
+        </record>
+
+        <record id="variants_action" model="ir.actions.act_window">
+            <field name="name">Attribute Values</field>
+            <field name="type">ir.actions.act_window</field>
+            <field name="res_model">product.attribute.value</field>
+            <field name="view_mode">tree</field>
+            <field name="view_type">form</field>
+        </record>
+
+        <menuitem action="variants_action"
+            id="menu_variants_action"
+            parent="product.prod_config_main" sequence="10" />
 
         <!--  -->
 
@@ -399,7 +465,7 @@
             <field name="name">product.category.form</field>
             <field name="model">product.category</field>
             <field name="arch" type="xml">
-                <form string="Product Categories" version="7.0">
+                <form string="Product Categories">
                     <sheet>
                         <div class="oe_title">
                             <label for="name" class="oe_edit_only"/>
@@ -503,7 +569,7 @@
             <field name="name">product.uom.form</field>
             <field name="model">product.uom</field>
             <field name="arch" type="xml">
-                <form string="Units of Measure" version="7.0">
+                <form string="Units of Measure">
                     <group>
                         <group>
                             <field name="name"/>
@@ -551,7 +617,7 @@
             <field name="name">product.uom.categ.form</field>
             <field name="model">product.uom.categ</field>
             <field name="arch" type="xml">
-                <form string="Units of Measure categories" version="7.0">
+                <form string="Units of Measure categories">
                     <group>
                         <field name="name"/>
                     </group>
@@ -581,7 +647,7 @@
             <field name="name">product.ul.form.view</field>
             <field name="model">product.ul</field>
             <field name="arch" type="xml">
-                <form string="Logistic Units" version="7.0">
+                <form string="Logistic Units">
                     <sheet>
                     <group>
                         <field name="name"/>
@@ -644,7 +710,7 @@
             <field name="name">product.packaging.form.view</field>
             <field name="model">product.packaging</field>
             <field name="arch" type="xml">
-                <form string="Packaging" version="7.0">
+                <form string="Packaging">
                     <group col="4">
                         <field name="product_tmpl_id"/>
                         <newline/>
@@ -669,7 +735,7 @@
             <field name="name">product.supplierinfo.form.view</field>
             <field name="model">product.supplierinfo</field>
             <field name="arch" type="xml">
-                <form string="Supplier Information" version="7.0">
+                <form string="Supplier Information">
                     <group col="4">
                         <field name="name" context="{'default_customer': 0, 'search_default_supplier': 1, 'default_supplier': 1}"/>
                         <field name="sequence"/>
@@ -686,7 +752,7 @@
                             <field name="min_quantity"/>
                             <field name="price"/>
                         </tree>
-                        <form version="7.0">
+                        <form>
                             <group>
                                 <field name="min_quantity"/>
                                 <field name="price"/>

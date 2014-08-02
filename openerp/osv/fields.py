@@ -81,9 +81,8 @@ class _column(object):
     _symbol_f = _symbol_set
     _symbol_set = (_symbol_c, _symbol_f)
     _symbol_get = None
-
-    # used to hide a certain field type in the list of field types
     _deprecated = False
+    copy = True # whether the field is copied by BaseModel.copy()
 
     def __init__(self, string='unknown', required=False, readonly=False, domain=None, context=None, states=None, priority=0, change_default=False, size=None, ondelete=None, translate=False, select=False, manual=False, **args):
         """
@@ -126,13 +125,14 @@ class _column(object):
 
     def to_field(self):
         """ convert column `self` to a new-style field """
-        from openerp.osv.fields2 import Field
+        from openerp.fields import Field
         return Field.by_type[self._type](**self.to_field_args())
 
     def to_field_args(self):
         """ return a dictionary with all the arguments to pass to the field """
         items = [
             ('_origin', self),                  # field interfaces self
+            ('copy', self.copy),
             ('index', self.select),
             ('string', self.string),
             ('help', self.help),
@@ -465,7 +465,7 @@ class datetime(_column):
             tz_name = user.tz
         if tz_name:
             try:
-                utc = pytz.timezone('UTC')
+                utc = pytz.utc
                 context_tz = pytz.timezone(tz_name)
                 utc_timestamp = utc.localize(timestamp, is_dst=False) # UTC = no DST
                 return utc_timestamp.astimezone(context_tz)
@@ -601,32 +601,6 @@ class many2one(_column):
         args['auto_join'] = self._auto_join
         return args
 
-    def get(self, cr, obj, ids, name, user=None, context=None, values=None):
-        if context is None:
-            context = {}
-        if values is None:
-            values = {}
-
-        res = {}
-        for r in values:
-            res[r['id']] = r[name]
-        for id in ids:
-            res.setdefault(id, '')
-        obj = obj.pool[self._obj]
-
-        # build a dictionary of the form {'id_of_distant_resource': name_of_distant_resource}
-        # we use uid=1 because the visibility of a many2one field value (just id and name)
-        # must be the access right of the parent form and not the linked object itself.
-        records = dict(obj.name_get(cr, SUPERUSER_ID,
-                                    list(set([x for x in res.values() if isinstance(x, (int,long))])),
-                                    context=context))
-        for id in res:
-            if res[id] in records:
-                res[id] = (res[id], records[res[id]])
-            else:
-                res[id] = False
-        return res
-
     def set(self, cr, obj_src, id, field, values, user=None, context=None):
         if not context:
             context = {}
@@ -664,6 +638,9 @@ class one2many(_column):
     _classic_write = False
     _prefetch = False
     _type = 'one2many'
+
+    # one2many columns are not copied by default
+    copy = False
 
     def __init__(self, obj, fields_id, string='unknown', limit=None, auto_join=False, **args):
         _column.__init__(self, string=string, **args)
@@ -1206,6 +1183,9 @@ class function(_column):
     _type = 'function'
     _properties = True
 
+    # function fields are not copied by default
+    copy = False
+
 #
 # multi: compute several fields in one call
 #
@@ -1295,17 +1275,7 @@ class function(_column):
         field_type = obj._columns[field]._type
         new_values = dict(values)
 
-        if field_type == "integer":
-            # integer/long values greater than 2^31-1 are not supported
-            # in pure XMLRPC, so we have to pass them as floats :-(
-            # This is not needed for stored fields and non-functional integer
-            # fields, as their values are constrained by the database backend
-            # to the same 32bits signed int limit.
-            for rid, value in values.iteritems():
-                if value and value > xmlrpclib.MAXINT:
-                    new_values[rid] = __builtin__.float(value)
-
-        elif field_type == 'binary':
+        if field_type == 'binary':
             if context.get('bin_size'):
                 # client requests only the size of binary fields
                 for rid, value in values.iteritems():
@@ -1316,21 +1286,19 @@ class function(_column):
                     if value:
                         new_values[rid] = sanitize_binary_value(value)
 
-        elif field_type == "many2one" and hasattr(obj._columns[field], 'relation'):
-            # make the result a tuple if it is not already one
-            if all(isinstance(value, (int, long)) for value in values.values() if value):
-                obj_model = obj.pool[obj._columns[field].relation]
-                ids = [i for i in values.values() if i]
-                dict_names = dict(obj_model.name_get(cr, SUPERUSER_ID, ids, context))
-                for rid, value in values.iteritems():
-                    if value:
-                        new_values[rid] = (value, dict_names[value])
-
         return new_values
 
     def get(self, cr, obj, ids, name, uid=False, context=None, values=None):
-        result = self._fnct(obj, cr, uid, ids, name, self._arg, context)
-        if self._multi:
+        multi = self._multi
+        # if we already have a value, don't recompute it.
+        # This happen if case of stored many2one fields
+        if values and not multi and name in values[0]:
+            result = {v['id']: v[name] for v in values}
+        elif values and multi and all(n in values[0] for n in name):
+            result = {v['id']: dict((n, v[n]) for n in name) for v in values}
+        else:
+            result = self._fnct(obj, cr, uid, ids, name, self._arg, context)
+        if multi:
             swap = {}
             for rid, values in result.iteritems():
                 for f, v in values.iteritems():
@@ -1387,18 +1355,20 @@ class related(function):
         for instance in obj.browse(cr, uid, ids, context=context):
             # traverse all fields except the last one
             for field in self.arg[:-1]:
-                instance = instance[field]
+                instance = instance[field][:1]
             if instance:
-                # write on the last field of the first record
-                instance[0].write({self.arg[-1]: values})
+                # write on the last field of the target record
+                instance.write({self.arg[-1]: values})
 
     def _fnct_read(self, obj, cr, uid, ids, field_name, args, context=None):
         res = {}
         for record in obj.browse(cr, SUPERUSER_ID, ids, context=context):
             value = record
-            for field in self.arg:
-                value = value[field]
-            res[record.id] = value
+            # traverse all fields except the last one
+            for field in self.arg[:-1]:
+                value = value[field][:1]
+            # read the last field on the target record
+            res[record.id] = value[self.arg[-1]]
 
         if self._type == 'many2one':
             # res[id] is a recordset; convert it to (id, name) or False.
@@ -1564,130 +1534,51 @@ class serialized(_column):
 # TODO: review completly this class for speed improvement
 class property(function):
 
-    def _get_default(self, obj, cr, uid, prop_name, context=None):
-        return self._get_defaults(obj, cr, uid, [prop_name], context=None)[prop_name]
+    def to_field_args(self):
+        args = super(property, self).to_field_args()
+        args['company_dependent'] = True
+        return args
 
-    def _get_defaults(self, obj, cr, uid, prop_names, context=None):
-        """Get the default values for ``prop_names´´ property fields (result of ir.property.get() function for res_id = False).
+    def _fnct_search(self, tobj, cr, uid, obj, name, domain, context=None):
+        ir_property = obj.pool['ir.property']
+        result = []
+        for field, operator, value in domain:
+            result += ir_property.search_multi(cr, uid, name, tobj._name, operator, value, context=context)
+        return result
 
-           :param list of string prop_names: list of name of property fields for those we want the default value
-           :return: map of property field names to their default value
-           :rtype: dict
-        """
-        prop = obj.pool.get('ir.property')
-        res = {}
-        for prop_name in prop_names:
-            res[prop_name] = prop.get(cr, uid, prop_name, obj._name, context=context)
-        return res
-
-    def _get_by_id(self, obj, cr, uid, prop_name, ids, context=None):
-        prop = obj.pool.get('ir.property')
-        vids = [obj._name + ',' + str(oid) for oid in  ids]
-        domain = [('fields_id.model', '=', obj._name), ('fields_id.name', 'in', prop_name)]
-        if context and context.get('company_id'):
-            domain += [('company_id', '=', context.get('company_id'))]
-        if vids:
-            domain = [('res_id', 'in', vids)] + domain
-        return prop.search(cr, uid, domain, context=context)
-
-    # TODO: to rewrite more clean
-    def _fnct_write(self, obj, cr, uid, id, prop_name, id_val, obj_dest, context=None):
-        if context is None:
-            context = {}
-
-        def_id = self._field_get(cr, uid, obj._name, prop_name)
-        company = obj.pool.get('res.company')
-        cid = company._company_default_get(cr, uid, obj._name, def_id, context=context)
-        # TODO for trunk: add new parameter company_id to _get_by_id method
-        context_company = dict(context, company_id=cid)
-        nids = self._get_by_id(obj, cr, uid, [prop_name], [id], context_company)
-        if nids:
-            cr.execute('DELETE FROM ir_property WHERE id IN %s', (tuple(nids),))
-
-        default_val = self._get_default(obj, cr, uid, prop_name, context)
-
-        property_create = False
-        if isinstance(default_val, openerp.osv.orm.BaseModel):
-            if default_val.id != id_val:
-                property_create = True
-        elif default_val != id_val:
-            property_create = True
-
-        if property_create:
-            propdef = obj.pool.get('ir.model.fields').browse(cr, uid, def_id,
-                                                             context=context)
-            prop = obj.pool.get('ir.property')
-            return prop.create(cr, uid, {
-                'name': propdef.name,
-                'value': id_val,
-                'res_id': obj._name+','+str(id),
-                'company_id': cid,
-                'fields_id': def_id,
-                'type': self._type,
-            }, context=context)
-        return False
+    def _fnct_write(self, obj, cr, uid, id, prop_name, value, obj_dest, context=None):
+        ir_property = obj.pool['ir.property']
+        ir_property.set_multi(cr, uid, prop_name, obj._name, {id: value}, context=context)
+        return True
 
     def _fnct_read(self, obj, cr, uid, ids, prop_names, obj_dest, context=None):
-        prop = obj.pool.get('ir.property')
-        # get the default values (for res_id = False) for the property fields
-        default_val = self._get_defaults(obj, cr, uid, prop_names, context)
+        ir_property = obj.pool['ir.property']
 
-        # build the dictionary that will be returned
-        res = {}
-        for id in ids:
-            res[id] = default_val.copy()
-
+        res = {id: {} for id in ids}
         for prop_name in prop_names:
-            property_field = obj._all_columns.get(prop_name).column
-            property_destination_obj = property_field._obj if property_field._type == 'many2one' else False
-            # If the property field is a m2o field, we will append the id of the value to name_get_ids
-            # in order to make a name_get in batch for all the ids needed.
-            name_get_ids = {}
-            for id in ids:
-                # get the result of ir.property.get() for this res_id and save it in res if it's existing
-                obj_reference = obj._name + ',' + str(id)
-                value = prop.get(cr, uid, prop_name, obj._name, res_id=obj_reference, context=context)
-                if value:
+            column = obj._all_columns[prop_name].column
+            values = ir_property.get_multi(cr, uid, prop_name, obj._name, ids, context=context)
+            if column._type == 'many2one':
+                for id, value in values.iteritems():
+                    res[id][prop_name] = value.name_get()[0] if value else False
+            else:
+                for id, value in values.iteritems():
                     res[id][prop_name] = value
-                # Check existence as root (as seeing the name of a related
-                # object depends on access right of source document,
-                # not target, so user may not have access) in order to avoid
-                # pointing on an unexisting record.
-                if property_destination_obj:
-                    if res[id][prop_name] and obj.pool[property_destination_obj].exists(cr, SUPERUSER_ID, res[id][prop_name].id):
-                        name_get_ids[id] = res[id][prop_name].id
-                    else:
-                        res[id][prop_name] = False
-            if property_destination_obj:
-                # name_get as root (as seeing the name of a related
-                # object depends on access right of source document,
-                # not target, so user may not have access.)
-                name_get_values = dict(obj.pool[property_destination_obj].name_get(cr, SUPERUSER_ID, name_get_ids.values(), context=context))
-                # the property field is a m2o, we need to return a tuple with (id, name)
-                for k, v in name_get_ids.iteritems():
-                    if res[k][prop_name]:
-                        res[k][prop_name] = (v , name_get_values.get(v))
+
         return res
 
-    def _field_get(self, cr, uid, model_name, prop):
-        if not self.field_id.get(cr.dbname):
-            cr.execute('SELECT id \
-                    FROM ir_model_fields \
-                    WHERE name=%s AND model=%s', (prop, model_name))
-            res = cr.fetchone()
-            self.field_id[cr.dbname] = res and res[0]
-        return self.field_id[cr.dbname]
-
-
     def __init__(self, **args):
-        self.field_id = {}
         if 'view_load' in args:
             _logger.warning("view_load attribute is deprecated on ir.fields. Args: %r", args)
         obj = 'relation' in args and args['relation'] or ''
-        function.__init__(self, self._fnct_read, False, self._fnct_write, obj=obj, multi='properties', **args)
-
-    def restart(self):
-        self.field_id = {}
+        super(property, self).__init__(
+            fnct=self._fnct_read,
+            fnct_inv=self._fnct_write,
+            fnct_search=self._fnct_search,
+            obj=obj,
+            multi='properties',
+            **args
+        )
 
 
 class column_info(object):

@@ -19,8 +19,8 @@
 #
 ##############################################################################
 
-from openerp import depends, model, one, Integer, One2many, Html
-from openerp.addons.event.event import event_event as Event
+from openerp import api
+from openerp.fields import Integer, One2many, Html
 from openerp.osv import fields, osv
 from openerp.tools.translate import _
 
@@ -94,8 +94,7 @@ class sale_order_line(osv.osv):
         '''
         create registration with sales order
         '''
-        if context is None:
-            context = {}
+        context = dict(context or {})
         registration_obj = self.pool.get('event.registration')
         for order_line in self.browse(cr, uid, ids, context=context):
             if order_line.event_id:
@@ -139,7 +138,7 @@ class event_event(osv.osv):
     badge_innerleft = Html('Badge Innner Left', translate=True, states={'done': [('readonly', True)]})
     badge_innerright = Html('Badge Inner Right', translate=True, states={'done': [('readonly', True)]})
 
-    @model
+    @api.model
     def _default_tickets(self):
         try:
             product = self.env.ref('event_sale.product_product_event')
@@ -151,8 +150,8 @@ class event_event(osv.osv):
         except ValueError:
             return self.env['event.event.ticket']
 
-    @one
-    @depends('event_ticket_ids.seats_max')
+    @api.one
+    @api.depends('event_ticket_ids.seats_max')
     def _compute_seats_max(self):
         self.seats_max = sum(ticket.seats_max for ticket in self.event_ticket_ids)
 
@@ -184,14 +183,14 @@ class event_ticket(osv.osv):
         
 
     _columns = {
-        'name': fields.char('Name', size=64, required=True, translate=True),
+        'name': fields.char('Name', required=True, translate=True),
         'event_id': fields.many2one('event.event', "Event", required=True, ondelete='cascade'),
         'product_id': fields.many2one('product.product', 'Product', required=True, domain=[("event_type_id", "!=", False)]),
         'registration_ids': fields.one2many('event.registration', 'event_ticket_id', 'Registrations'),
         'deadline': fields.date("Sales End"),
         'is_expired': fields.function(_is_expired, type='boolean', string='Is Expired'),
         'price': fields.float('Price'),
-        'seats_max': fields.integer('Maximum Avalaible Seats', oldname='register_max', help="You can for each event define a maximum registration level. If you have too much registrations you are not able to confirm your event. (put 0 to ignore this rule )"),
+        'seats_max': fields.integer('Maximum Available Seats', oldname='register_max', help="You can for each event define a maximum registration level. If you have too much registrations you are not able to confirm your event. (put 0 to ignore this rule )"),
         'seats_reserved': fields.function(_get_seats, string='Reserved Seats', type='integer', multi='seats_reserved'),
         'seats_available': fields.function(_get_seats, string='Available Seats', type='integer', multi='seats_reserved'),
         'seats_unconfirmed': fields.function(_get_seats, string='Unconfirmed Seat Reservations', type='integer', multi='seats_reserved'),
@@ -221,7 +220,8 @@ class event_ticket(osv.osv):
     ]
 
     def onchange_product_id(self, cr, uid, ids, product_id=False, context=None):
-        return {'value': {'price': self.pool.get("product.product").browse(cr, uid, product_id).list_price or 0}}
+        price = self.pool.get("product.product").browse(cr, uid, product_id).list_price if product_id else 0
+        return {'value': {'price': price}}
 
 
 class event_registration(osv.osv):
