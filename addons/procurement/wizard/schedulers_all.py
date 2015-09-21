@@ -1,26 +1,9 @@
 # -*- coding: utf-8 -*-
-##############################################################################
-#
-#    OpenERP, Open Source Management Solution
-#    Copyright (C) 2004-2010 Tiny SPRL (<http://tiny.be>).
-#
-#    This program is free software: you can redistribute it and/or modify
-#    it under the terms of the GNU Affero General Public License as
-#    published by the Free Software Foundation, either version 3 of the
-#    License, or (at your option) any later version.
-#
-#    This program is distributed in the hope that it will be useful,
-#    but WITHOUT ANY WARRANTY; without even the implied warranty of
-#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-#    GNU Affero General Public License for more details.
-#
-#    You should have received a copy of the GNU Affero General Public License
-#    along with this program.  If not, see <http://www.gnu.org/licenses/>.
-#
-##############################################################################
+# Part of Odoo. See LICENSE file for full copyright and licensing details.
 
 import logging
 import threading
+from openerp import SUPERUSER_ID
 from openerp import tools
 
 from openerp.osv import osv
@@ -45,6 +28,7 @@ class procurement_compute_all(osv.osv_memory):
             #As this function is in a new thread, i need to open a new cursor, because the old one may be closed
 
             new_cr = self.pool.cursor()
+            scheduler_cron_id = self.pool['ir.model.data'].get_object_reference(new_cr, SUPERUSER_ID, 'procurement', 'ir_cron_scheduler_action')[1]
             # Avoid to run the scheduler multiple times in the same time
             try:
                 with tools.mute_logger('openerp.sql_db'):
@@ -73,6 +57,3 @@ class procurement_compute_all(osv.osv_memory):
         threaded_calculation = threading.Thread(target=self._procure_calculation_all, args=(cr, uid, ids, context))
         threaded_calculation.start()
         return {'type': 'ir.actions.act_window_close'}
-
-
-# vim:expandtab:smartindent:tabstop=4:softtabstop=4:shiftwidth=4:

@@ -1,23 +1,5 @@
 # -*- coding: utf-8 -*-
-##############################################################################
-#
-#    OpenERP, Open Source Management Solution
-#    Copyright (C) 2004-2010 Tiny SPRL (<http://tiny.be>).
-#
-#    This program is free software: you can redistribute it and/or modify
-#    it under the terms of the GNU Affero General Public License as
-#    published by the Free Software Foundation, either version 3 of the
-#    License, or (at your option) any later version.
-#
-#    This program is distributed in the hope that it will be useful,
-#    but WITHOUT ANY WARRANTY; without even the implied warranty of
-#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-#    GNU Affero General Public License for more details.
-#
-#    You should have received a copy of the GNU Affero General Public License
-#    along with this program.  If not, see <http://www.gnu.org/licenses/>.
-#
-##############################################################################
+# Part of Odoo. See LICENSE file for full copyright and licensing details.
 
 from openerp.osv import fields, osv
 from openerp import tools
@@ -46,14 +28,15 @@ class report_membership(osv.osv):
         'num_waiting': fields.integer('# Waiting', readonly=True),
         'num_invoiced': fields.integer('# Invoiced', readonly=True),
         'num_paid': fields.integer('# Paid', readonly=True),
-        'tot_pending': fields.float('Pending Amount', digits_compute= dp.get_precision('Account'), readonly=True),
-        'tot_earned': fields.float('Earned Amount', digits_compute= dp.get_precision('Account'), readonly=True),
+        'tot_pending': fields.float('Pending Amount', digits=0, readonly=True),
+        'tot_earned': fields.float('Earned Amount', digits=0, readonly=True),
         'partner_id': fields.many2one('res.partner', 'Member', readonly=True),
         'associate_member_id': fields.many2one('res.partner', 'Associate Member', readonly=True),
         'membership_id': fields.many2one('product.product', 'Membership Product', readonly=True),
         'membership_state': fields.selection(STATE, 'Current Membership State', readonly=True),
         'user_id': fields.many2one('res.users', 'Salesperson', readonly=True),
-        'company_id': fields.many2one('res.company', 'Company', readonly=True)
+        'company_id': fields.many2one('res.company', 'Company', readonly=True),
+        'quantity': fields.integer("Quantity", readonly=True),
         }
 
     def init(self, cr):
@@ -64,6 +47,7 @@ class report_membership(osv.osv):
         SELECT
         MIN(id) AS id,
         partner_id,
+        count(membership_id) as quantity,
         user_id,
         membership_state,
         associate_member_id,
@@ -122,6 +106,3 @@ class report_membership(osv.osv):
             associate_member_id,
             membership_amount
         )""")
-
-
-# vim:expandtab:smartindent:tabstop=4:softtabstop=4:shiftwidth=4:

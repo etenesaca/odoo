@@ -19,7 +19,7 @@ class website_hr_recruitment(http.Controller):
         '/jobs/department/<model("hr.department"):department>/office/<int:office_id>',
         '/jobs/country/<model("res.country"):country>/department/<model("hr.department"):department>/office/<int:office_id>',
     ], type='http', auth="public", website=True)
-    def jobs(self, country=None, department=None, office_id=None):
+    def jobs(self, country=None, department=None, office_id=None, **kwargs):
         env = request.env(context=dict(request.env.context, show_address=True, no_tag_br=True))
 
         Country = env['res.country']
@@ -36,14 +36,16 @@ class website_hr_recruitment(http.Controller):
         countries = set(o.country_id for o in offices if o.country_id)
 
         # Default search by user country
-        if not (country or department or office_id):
+        if not (country or department or office_id or kwargs.get('all_countries')):
             country_code = request.session['geoip'].get('country_code')
             if country_code:
                 countries_ = Country.search([('code', '=', country_code)])
                 country = countries_[0] if countries_ else None
+                if not any(j for j in jobs if j.address_id and j.address_id.country_id == country):
+                    country = False
 
         # Filter the matching one
-        if country:
+        if country and not kwargs.get('all_countries'):
             jobs = (j for j in jobs if j.address_id is None or j.address_id.country_id and j.address_id.country_id.id == country.id)
         if department:
             jobs = (j for j in jobs if j.department_id and j.department_id.id == department.id)
@@ -76,7 +78,7 @@ class website_hr_recruitment(http.Controller):
         })
 
     @http.route('/jobs/apply/<model("hr.job"):job>', type='http', auth="public", website=True)
-    def jobs_apply(self, job):
+    def jobs_apply(self, job, **kwargs):
         error = {}
         default = {}
         if 'website_hr_recruitment_error' in request.session:
@@ -87,45 +89,3 @@ class website_hr_recruitment(http.Controller):
             'error': error,
             'default': default,
         })
-
-    @http.route('/jobs/thankyou', methods=['POST'], type='http', auth="public", website=True)
-    def jobs_thankyou(self, **post):
-        error = {}
-        for field_name in ["partner_name", "phone", "email_from"]:
-            if not post.get(field_name):
-                error[field_name] = 'missing'
-        if error:
-            request.session['website_hr_recruitment_error'] = error
-            ufile = post.pop('ufile')
-            if ufile:
-                error['ufile'] = 'reset'
-            request.session['website_hr_recruitment_default'] = post
-            return request.redirect('/jobs/apply/%s' % post.get("job_id"))
-
-        # public user can't create applicants (duh)
-        env = request.env(user=SUPERUSER_ID)
-        value = {
-            'source_id' : env.ref('hr_recruitment.source_website_company').id,
-            'name': '%s\'s Application' % post.get('partner_name'), 
-        }
-        for f in ['email_from', 'partner_name', 'description']:
-            value[f] = post.get(f)
-        for f in ['department_id', 'job_id']:
-            value[f] = int(post.get(f) or 0)
-        # Retro-compatibility for saas-3. "phone" field should be replace by "partner_phone" in the template in trunk.
-        value['partner_phone'] = post.pop('phone', False)
-
-        applicant_id = env['hr.applicant'].create(value).id
-        if post['ufile']:
-            attachment_value = {
-                'name': post['ufile'].filename,
-                'res_name': value['partner_name'],
-                'res_model': 'hr.applicant',
-                'res_id': applicant_id,
-                'datas': base64.encodestring(post['ufile'].read()),
-                'datas_fname': post['ufile'].filename,
-            }
-            env['ir.attachment'].create(attachment_value)
-        return request.render("website_hr_recruitment.thankyou", {})
-
-# vim :et:
